@@ -1,0 +1,6 @@
+name: astrbot_plugin_custom_plan
+display_name: 自定义计划
+desc: 通过自然语言管理统一计划数据，支持表格、打卡、待办、日历和本地看板图片。
+version: 0.1.0
+author: rytte
+astrbot_version: ">=4.27,<5"

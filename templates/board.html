@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:"><style>{{ font_css | safe }}{{ styles | safe }}</style></head>
+<body><main class="board">
+<header class="header"><div class="eyebrow">CUSTOM PLAN</div><h1>{{ plan.name }}</h1>{% if plan.goal %}<p class="goal">{{ plan.goal }}</p>{% endif %}<div class="meta"><span>{{ '个人' if plan.scope == 'person' else '群组' }} · {{ {'private':'私有','shared':'本人可跨群使用','protected':'创建者修改 / 群员查看','public':'群员共同读写'}[plan.mode] }}</span><span>{{ plan.timezone }}</span></div></header>
+{% if view.visible %}<section class="panel">{% include view.template %}</section>{% endif %}
+{% for block in blocks %}<section class="panel">{% include block.template %}</section>{% endfor %}
+{% if not view.visible and not blocks %}<section class="panel empty">当前没有可见内容，可通过对话开启主视图或添加区块。</section>{% endif %}
+<footer class="footer"><span>{{ plan.plan_id }} · 数据版本 v{{ plan.revision }}</span><span>生成：{{ generated_at | localtime(plan.timezone) }} · 更新：{{ plan.updated_at | localtime(plan.timezone) }}</span></footer>
+</main></body></html>
