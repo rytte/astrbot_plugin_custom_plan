@@ -197,7 +197,7 @@ def test_layout_controls_default_paging_but_explicit_options_win(tmp_path):
         assert len(view["rows"]) == size and view["pages"] == pages
         assert len(build_view(plan, {"page_size": 3}, OWNER.user)["view"]["rows"]) == 3
         html = renderer.html(plan, options, OWNER.user)
-        assert f'<body class="{layout}">' in html
+        assert f'<body class="{layout}" data-theme="forest">' in html
         if layout == "mobile":
             assert "记录 9" in html and "记录 17" not in html
         assert options == {"page": 2}

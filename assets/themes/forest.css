@@ -1,0 +1,53 @@
+/* Theme values only. Layout dimensions and typography live in layouts/. */
+:root {
+  --canvas: #edf3ef;
+  --text: #20372b;
+  --text-eyebrow: #55725e;
+  --text-muted: #5c7163;
+  --surface: #ffffff;
+  --surface-subtle: #f4f7f4;
+  --text-empty: #6a7b6e;
+  --divider: #e7ede8;
+  --text-pager: #637869;
+  --task-marker: #31805b;
+  --text-completed: #6f8273;
+  --text-id: #7b8d7f;
+  --text-date: #876133;
+  --hero-background: #e7f3e9;
+  --hero-text: #286d4e;
+  --hero-divider: #cbded0;
+  --check-empty-background: #f3f6f3;
+  --check-done-background: #e1f1e5;
+  --check-done-text: #246948;
+  --check-partial-background: #fff0d8;
+  --check-partial-text: #8b642c;
+  --check-today-border: #387454;
+  --text-legend: #607466;
+  --text-calendar-muted: #647b6b;
+  --calendar-border: #dce7df;
+  --calendar-today-border: #3e7b56;
+  --calendar-label-background: #e9f4ec;
+  --calendar-text: #315f43;
+  --metric-text: #2d7150;
+  --metric-unit: #637969;
+  --progress-track: #ecf1ec;
+  --progress-fill: #62a179;
+  --text-footer: #657c6b;
+  --record-divider: #dde7df;
+  --agenda-divider: #e0e9e2;
+  --agenda-accent: #9cbfa7;
+  --radius-panel: 16px;
+  --radius-hero: 12px;
+  --radius-check-cell: 10px;
+  --radius-calendar-day: 9px;
+  --radius-calendar-label: 4px;
+  --radius-progress: 6px;
+  --radius-record: 14px;
+  --surface-shadow: none;
+}
+
+body.mobile {
+  --radius-panel: 20px;
+  --radius-hero: 16px;
+  --radius-progress: 8px;
+}

@@ -1,0 +1,81 @@
+/* A fixed image layout selected before capture, independent of the theme. */
+:root {
+  --board-padding: 24px;
+  --font-body: 26px;
+  --font-eyebrow: 18px;
+  --eyebrow-spacing: 3px;
+  --font-title: 38px;
+  --title-margin: 10px 0 14px;
+  --font-heading: 30px;
+  --heading-line-height: 1.4;
+  --font-subheading: 26px;
+  --font-muted: 22px;
+  --meta-gap: 6px 16px;
+  --meta-margin: 14px;
+  --panel-margin: 20px;
+  --section-gap: 6px 16px;
+  --section-margin: 20px;
+  --section-wrap: wrap;
+  --empty-padding: 20px;
+  --font-table: 26px;
+  --font-pager: 20px;
+  --pager-margin: 22px;
+  --task-padding: 20px;
+  --task-marker-width: 32px;
+  --font-task-marker: 30px;
+  --font-task-id: 18px;
+  --hero-display: block;
+  --hero-margin: 0 0 22px;
+  --font-hero: 36px;
+  --check-gap: 6px;
+  --check-padding: 12px 2px;
+  --font-check: 20px;
+  --font-check-mark: 28px;
+  --check-mark-margin: 5px 0;
+  --legend-gap: 8px 16px;
+  --font-legend: 20px;
+  --legend-margin: 20px;
+  --calendar-gap: 6px;
+  --weekday-padding: 6px 0;
+  --calendar-day-height: 82px;
+  --calendar-day-padding: 8px 2px;
+  --font-calendar-label: 26px;
+  --font-calendar-more: 20px;
+  --font-metric: 48px;
+  --font-metric-unit: 24px;
+  --progress-height: 14px;
+  --footer-gap: 8px;
+  --footer-padding: 4px;
+  --font-footer: 18px;
+}
+
+.section-head > * { min-width: 0; overflow-wrap: anywhere; }
+.pager { overflow-wrap: anywhere; }
+.record-card { padding: 18px; }
+.record-card + .record-card { margin-top: 14px; }
+.record-number { font-size: 20px; margin-bottom: 10px; }
+.record-fields { margin: 0; }
+.record-field { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 10px 0; }
+.record-field dt { font-size: 22px; }
+.record-field dd { margin: 0; font-size: 26px; white-space: pre-wrap; }
+.record-field dt, .record-field dd { min-width: 0; overflow-wrap: anywhere; }
+.field-unit { display: block; font-size: 20px; }
+.task-mark { line-height: 1.5; }
+.task-title { font-size: 28px; font-weight: 600; margin-bottom: 6px; }
+.task-body > * { overflow-wrap: anywhere; }
+.task-date { margin-top: 8px; white-space: normal; }
+.task-id { margin-top: 8px; }
+.check-current { font-size: 42px; line-height: 1.35; overflow-wrap: anywhere; margin: 10px 0; }
+.check-streak { padding-top: 14px; margin-top: 16px; }
+.check-caption { font-size: 22px; margin-bottom: 12px; }
+.check-cell { min-width: 0; overflow-wrap: anywhere; }
+.check-amount { display: block; }
+.calendar-day { min-width: 0; text-align: center; font-size: 26px; }
+.calendar-count { display: block; font-size: 18px; margin-top: 4px; }
+.calendar-key { font-size: 20px; margin-top: 14px; }
+.agenda { margin-top: 26px; }
+.agenda-day { padding: 18px 0; }
+.agenda-date { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 14px; font-size: 22px; margin-bottom: 8px; }
+.agenda-label { margin-top: 6px; padding-left: 16px; overflow-wrap: anywhere; }
+.metric { overflow-wrap: anywhere; }
+.footer > span { display: block; width: 100%; overflow-wrap: anywhere; }

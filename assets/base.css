@@ -1,0 +1,73 @@
+/* Shared components: theme variables control appearance, layout variables size. */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: PlanFont, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  font-size: var(--font-body);
+  line-height: 1.55;
+}
+.board { width: var(--board-width); padding: var(--board-padding); background: var(--canvas); }
+.header { padding: 4px 4px 24px; }
+.eyebrow { font-size: var(--font-eyebrow); letter-spacing: var(--eyebrow-spacing); color: var(--text-eyebrow); }
+h1 { font-size: var(--font-title); line-height: 1.35; margin: var(--title-margin); overflow-wrap: anywhere; }
+h2 { font-size: var(--font-heading); line-height: var(--heading-line-height); margin: 0 0 14px; }
+h3 { font-size: var(--font-subheading); margin: 0 0 8px; }
+p { margin: 6px 0; overflow-wrap: anywhere; }
+.meta, .muted { color: var(--text-muted); font-size: var(--font-muted); }
+.meta { display: flex; gap: var(--meta-gap); flex-wrap: wrap; margin-top: var(--meta-margin); }
+.goal { white-space: pre-wrap; }
+.panel { background: var(--surface); border-radius: var(--radius-panel); padding: 24px; margin-bottom: var(--panel-margin); box-shadow: var(--surface-shadow); }
+.section-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--section-gap); margin-bottom: var(--section-margin); flex-wrap: var(--section-wrap); }
+.section-head h2 { margin: 0; }
+.empty { padding: var(--empty-padding) 0; color: var(--text-empty); }
+.table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.table th, .table td { text-align: left; padding: 12px 10px; vertical-align: top; border-bottom: 1px solid var(--divider); overflow-wrap: anywhere; white-space: pre-wrap; }
+.table th { font-weight: 500; background: var(--surface-subtle); }
+.table td { font-size: var(--font-table); }
+.pager { margin-top: var(--pager-margin); color: var(--text-pager); font-size: var(--font-pager); }
+.task { display: flex; gap: 14px; padding: var(--task-padding) 0; border-bottom: 1px solid var(--divider); break-inside: avoid; }
+.task:last-child { border-bottom: 0; }
+.task-mark { flex: 0 0 var(--task-marker-width); color: var(--task-marker); font-size: var(--font-task-marker); }
+.task-body { flex: 1; min-width: 0; }
+.task-title { overflow-wrap: anywhere; }
+.task.done .task-title { text-decoration: line-through; color: var(--text-completed); }
+.task-id { font-size: var(--font-task-id); color: var(--text-id); }
+.task-date { font-size: var(--font-muted); color: var(--text-date); white-space: nowrap; }
+.check-hero { background: var(--hero-background); padding: 22px; border-radius: var(--radius-hero); display: var(--hero-display); justify-content: space-between; align-items: center; margin: var(--hero-margin); box-shadow: var(--surface-shadow); }
+.hero-value { font-size: var(--font-hero); color: var(--hero-text); }
+.check-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--check-gap); }
+.check-cell { padding: var(--check-padding); background: var(--check-empty-background); border-radius: var(--radius-check-cell); text-align: center; font-size: var(--font-check); }
+.check-cell.done { background: var(--check-done-background); color: var(--check-done-text); }
+.check-cell.partial { background: var(--check-partial-background); color: var(--check-partial-text); }
+.check-cell.today { outline: 2px solid var(--check-today-border); outline-offset: -2px; }
+.check-mark { font-size: var(--font-check-mark); display: block; margin: var(--check-mark-margin); }
+.legend { display: flex; gap: var(--legend-gap); flex-wrap: wrap; color: var(--text-legend); font-size: var(--font-legend); margin-top: var(--legend-margin); }
+.calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--calendar-gap); }
+.weekday { text-align: center; color: var(--text-calendar-muted); font-size: var(--font-muted); padding: var(--weekday-padding); }
+.calendar-day { min-height: var(--calendar-day-height); border: 1px solid var(--calendar-border); border-radius: var(--radius-calendar-day); padding: var(--calendar-day-padding); overflow-wrap: anywhere; }
+.calendar-day.blank { border-color: transparent; }
+.calendar-day.today { outline: 2px solid var(--calendar-today-border); outline-offset: -2px; }
+.calendar-label { display: block; background: var(--calendar-label-background); color: var(--calendar-text); border-radius: var(--radius-calendar-label); padding: 3px 5px; font-size: var(--font-calendar-label); margin-top: 6px; }
+.calendar-more { font-size: var(--font-calendar-more); color: var(--text-calendar-muted); margin-top: 4px; }
+.metric { font-size: var(--font-metric); color: var(--metric-text); }
+.metric-unit { font-size: var(--font-metric-unit); color: var(--metric-unit); }
+.progress { height: var(--progress-height); border-radius: var(--radius-progress); background: var(--progress-track); margin-top: 14px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--progress-fill); }
+.note { white-space: pre-wrap; overflow-wrap: anywhere; }
+.footer { display: flex; justify-content: space-between; gap: var(--footer-gap); flex-wrap: wrap; padding: var(--footer-padding); color: var(--text-footer); font-size: var(--font-footer); }
+
+/* Components used by the mobile templates share the same theme palette. */
+.record-card { background: var(--surface-subtle); border-radius: var(--radius-record); box-shadow: var(--surface-shadow); }
+.record-number { color: var(--text-eyebrow); }
+.record-field + .record-field { border-top: 1px solid var(--record-divider); }
+.record-field dt { color: var(--text-muted); }
+.check-current { color: var(--hero-text); }
+.check-streak { border-top: 1px solid var(--hero-divider); }
+.check-caption, .calendar-key { color: var(--text-muted); }
+.mobile .calendar-day.today { background: var(--hero-background); }
+.calendar-count, .agenda-date { color: var(--calendar-text); }
+.agenda-day { border-top: 1px solid var(--agenda-divider); }
+.agenda-label { border-left: 3px solid var(--agenda-accent); }

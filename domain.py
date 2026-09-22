@@ -11,6 +11,8 @@ from datetime import date, datetime, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .appearance import DEFAULT_THEME, LAYOUTS, THEMES
+
 VIEWS = {"table", "checkin", "todo", "calendar"}
 BLOCKS = {"statistics", "notes"}
 MAX_RECORDS = 2000
@@ -105,10 +107,17 @@ def field(field_id: str, name: str, kind: str, **kwargs) -> dict:
 
 
 def validate_render_layout(value, label: str = "render_layout") -> str:
-    if value not in ("mobile", "desktop"):
+    if not isinstance(value, str) or value not in LAYOUTS:
         raise PlanError(
             f"{label} 必须明确设置为 mobile（移动版）或 desktop（桌面版）。"
         )
+    return value
+
+
+def validate_render_theme(value, label: str = "render_theme") -> str:
+    if not isinstance(value, str) or value not in THEMES:
+        available = "、".join(f"{key}（{theme.name}）" for key, theme in THEMES.items())
+        raise PlanError(f"{label} 必须明确设置为已注册主题：{available}。")
     return value
 
 
@@ -117,6 +126,7 @@ def create_plan(
     params: dict,
     default_timezone: str,
     default_render_layout: str = "mobile",
+    default_render_theme: str = DEFAULT_THEME,
 ) -> dict:
     """Build a preset with one dataset and a default table view.
 
@@ -125,6 +135,7 @@ def create_plan(
         params: Validated creation parameters, never ownership identifiers.
         default_timezone: Administrator-selected default timezone.
         default_render_layout: Initial layout stored in the new plan.
+        default_render_theme: Initial theme stored in the new plan.
 
     Returns:
         A complete document ready for transactional storage.
@@ -141,6 +152,7 @@ def create_plan(
             "target",
             "unit",
             "render_layout",
+            "render_theme",
         },
         "创建参数",
     )
@@ -166,6 +178,7 @@ def create_plan(
         "goal": params.get("goal", ""),
         "timezone": params.get("timezone", default_timezone),
         "render_layout": params.get("render_layout", default_render_layout),
+        "render_theme": params.get("render_theme", default_render_theme),
         "preset": preset,
         "revision": 1,
         "created_at": timestamp,
@@ -321,6 +334,7 @@ def validate_plan(plan: dict) -> None:
     text(plan["name"], "名称", 80, False)
     text(plan["goal"], "目标", 500)
     validate_render_layout(plan.get("render_layout"))
+    validate_render_theme(plan.get("render_theme"))
     try:
         ZoneInfo(text(plan["timezone"], "时区", 80, False))
     except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -522,7 +536,9 @@ def apply_change(plan: dict, action: str, params: dict, actor: Actor) -> list[st
     changed = []
     if action == "update":
         object_keys(
-            params, {"name", "goal", "mode", "timezone", "render_layout"}, "计划修改"
+            params,
+            {"name", "goal", "mode", "timezone", "render_layout", "render_theme"},
+            "计划修改",
         )
         if (
             "timezone" in params

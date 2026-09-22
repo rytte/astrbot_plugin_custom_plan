@@ -12,7 +12,8 @@ from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
-from .domain import PlanError, now_iso
+from .appearance import LAYOUTS, THEMES
+from .domain import PlanError, now_iso, validate_render_theme
 from .presentation import build_view, display
 
 
@@ -39,12 +40,15 @@ class LocalRenderer:
         self.closed = False
         self.tasks: set[asyncio.Task] = set()
         self.font_css = ""
-        base_styles = (self.root / "assets" / "board.css").read_text(encoding="utf-8")
-        self.styles = {
-            "desktop": base_styles,
-            "mobile": base_styles
-            + "\n"
-            + (self.root / "assets" / "mobile.css").read_text(encoding="utf-8"),
+        assets = self.root / "assets"
+        self.base_styles = (assets / "base.css").read_text(encoding="utf-8")
+        self.layout_styles = {
+            key: (assets / layout.stylesheet).read_text(encoding="utf-8")
+            for key, layout in LAYOUTS.items()
+        }
+        self.theme_styles = {
+            key: (assets / theme.stylesheet).read_text(encoding="utf-8")
+            for key, theme in THEMES.items()
         }
 
     async def initialize(self):
@@ -64,13 +68,23 @@ class LocalRenderer:
     def html(self, plan: dict, options: dict, actor_user: str) -> str:
         data = build_view(plan, options, actor_user)
         layout = plan["render_layout"]
-        if layout == "mobile":
-            data["view"]["template"] = "mobile/" + data["view"]["template"]
+        theme = validate_render_theme(plan.get("render_theme"))
+        definition = LAYOUTS[layout]
+        data["view"]["template"] = definition.template_prefix + data["view"]["template"]
+        styles = "\n".join(
+            (
+                self.base_styles,
+                self.layout_styles[layout],
+                self.theme_styles[theme],
+                f":root{{--board-width:{definition.width}px;}}",
+            )
+        )
         return self.environment.get_template("board.html").render(
             **data,
-            styles=self.styles[layout],
+            styles=styles,
             font_css=self.font_css,
             layout=layout,
+            theme=theme,
             generated_at=now_iso(),
         )
 
@@ -115,7 +129,7 @@ class LocalRenderer:
                         self.browser = await self.playwright.chromium.launch(**launch)
                     context = await self.browser.new_context(
                         viewport={
-                            "width": 640 if plan["render_layout"] == "mobile" else 1000,
+                            "width": LAYOUTS[plan["render_layout"]].width,
                             "height": 800,
                         },
                         device_scale_factor=1,

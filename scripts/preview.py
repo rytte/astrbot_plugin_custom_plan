@@ -10,6 +10,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from astrbot_plugin_custom_plan.appearance import (  # noqa: E402
+    DEFAULT_THEME,
+    LAYOUTS,
+    THEMES,
+)
 from astrbot_plugin_custom_plan.domain import (  # noqa: E402
     Actor,
     apply_change,
@@ -23,7 +28,8 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser", default="")
     parser.add_argument("--font", default="")
-    parser.add_argument("--layout", choices=("mobile", "desktop"), default="mobile")
+    parser.add_argument("--layout", choices=LAYOUTS, default="mobile")
+    parser.add_argument("--theme", choices=THEMES, default=DEFAULT_THEME)
     parser.add_argument(
         "--output",
         type=Path,
@@ -35,7 +41,7 @@ async def main():
         "font_path": args.font,
         "render_timeout": 90,
     }
-    output = args.output / args.layout
+    output = args.output / args.theme / args.layout
     renderer = LocalRenderer(output, config)
     await renderer.initialize()
     actor = Actor("preview", "demo")
@@ -59,6 +65,7 @@ async def main():
                     }[kind],
                     "preset": preset,
                     "render_layout": args.layout,
+                    "render_theme": args.theme,
                     "goal": "每天学习一点，记录自己的进步。",
                 },
                 "Asia/Shanghai",

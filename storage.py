@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 
+from .appearance import DEFAULT_THEME, THEMES
 from .domain import (
     Actor,
     PlanError,
@@ -23,6 +24,7 @@ from .domain import (
     today,
     validate_plan,
     validate_render_layout,
+    validate_render_theme,
 )
 
 
@@ -48,11 +50,15 @@ class Storage:
         path: Path,
         timezone: str = "Asia/Shanghai",
         default_render_layout: str = "mobile",
+        default_render_theme: str = DEFAULT_THEME,
     ):
         self.path = Path(path)
         self.timezone = timezone
         self.default_render_layout = validate_render_layout(
             default_render_layout, "default_render_layout"
+        )
+        self.default_render_theme = validate_render_theme(
+            default_render_theme, "default_render_theme"
         )
 
     @contextmanager
@@ -75,9 +81,9 @@ class Storage:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
-                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 2。")
-            if version == 2:
+            if version not in (0, 1, 2, 3):
+                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 3。")
+            if version == 3:
                 return
             if version == 0:
                 for statement in (
@@ -109,26 +115,32 @@ class Storage:
                 ):
                     connection.execute(statement)
             else:
-                self._migrate_render_layout(connection)
-            connection.execute("PRAGMA user_version=2")
+                self._migrate_appearance(connection, version)
+            connection.execute("PRAGMA user_version=3")
 
     @staticmethod
-    def _migrate_render_layout(connection) -> None:
-        """Upgrade v1 documents and undo snapshots once; never resolve at read time."""
+    def _migrate_appearance(connection, version: int) -> None:
+        """Upgrade v1/v2 documents and undo snapshots once, preserving their look."""
         for table, column in (("plans", "document"), ("changes", "previous")):
             rows = connection.execute(
                 f"SELECT rowid, {column} FROM {table} WHERE {column} IS NOT NULL"
             ).fetchall()
             for row in rows:
                 document = json.loads(row[column])
-                if "render_layout" in document:
-                    validate_render_layout(document["render_layout"])
-                    continue
-                document["render_layout"] = "mobile"
-                connection.execute(
-                    f"UPDATE {table} SET {column}=? WHERE rowid=?",
-                    (encode(document), row["rowid"]),
-                )
+                changed = False
+                if version == 1 and "render_layout" not in document:
+                    document["render_layout"] = "mobile"
+                    changed = True
+                if "render_theme" not in document:
+                    document["render_theme"] = "forest"
+                    changed = True
+                validate_render_layout(document.get("render_layout"))
+                validate_render_theme(document["render_theme"])
+                if changed:
+                    connection.execute(
+                        f"UPDATE {table} SET {column}=? WHERE rowid=?",
+                        (encode(document), row["rowid"]),
+                    )
 
     def _load(
         self,
@@ -203,6 +215,7 @@ class Storage:
                                     "mode",
                                     "preset",
                                     "render_layout",
+                                    "render_theme",
                                     "revision",
                                     "deleted",
                                 )
@@ -215,6 +228,10 @@ class Storage:
                     "page_size": size,
                     "default_view": "table",
                     "default_render_layout": self.default_render_layout,
+                    "default_render_theme": self.default_render_theme,
+                    "themes": [
+                        {"id": key, "name": theme.name} for key, theme in THEMES.items()
+                    ],
                     "timezone": self.timezone,
                     "today": today({"timezone": self.timezone}).isoformat(),
                     "presets": ["generic", "checkin", "goal", "todo"],
@@ -319,7 +336,11 @@ class Storage:
                         "每位用户最多创建 100 个计划（含可恢复的已删除计划）。"
                     )
                 plan = create_plan(
-                    actor, params, self.timezone, self.default_render_layout
+                    actor,
+                    params,
+                    self.timezone,
+                    self.default_render_layout,
+                    self.default_render_theme,
                 )
             else:
                 plan = self._load(
@@ -384,6 +405,7 @@ class Storage:
                 "revision": plan["revision"],
                 "changed_ids": changed,
                 "render_layout": plan["render_layout"],
+                "render_theme": plan["render_theme"],
                 "deleted": plan["deleted"],
             }
             connection.execute(

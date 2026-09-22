@@ -7,6 +7,7 @@ import math
 from collections import defaultdict
 from datetime import date, timedelta
 
+from .appearance import LAYOUTS
 from .domain import (
     PlanError,
     month_bounds,
@@ -73,7 +74,7 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
     layout = validate_render_layout(plan.get("render_layout"))
     page, size, column_page = (
         options.get("page", 1),
-        options.get("page_size", 8 if layout == "mobile" else 20),
+        options.get("page_size", LAYOUTS[layout].page_size),
         options.get("column_page", 1),
     )
     if (

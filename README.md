@@ -47,9 +47,11 @@ python -m playwright install --with-deps chromium
 
 图片是静态展示，修改通过对话或命令执行。截图失败会发送文字摘要，数据仍可查询和修改。
 
-## 移动版与桌面版样式
+## 布局与主题
 
 插件配置 `default_render_layout` 决定**创建计划时**的初始样式，默认 `mobile`。创建时会把选定样式写入 SQLite 中该计划文档的 `render_layout` 字段；以后发送图片直接使用该字段。调整插件配置只影响之后创建的计划，不会改变已有计划。
+
+主题独立保存为 `render_theme`，创建时取插件配置 `default_render_theme`，当前默认且内置的主题为 `forest`（清新绿）。同一主题可用于移动版和桌面版，也适用于表格、打卡、待办、日历、统计和随笔。更改主题不改变布局、分页或记录内容，更改全局默认主题不影响已有计划。
 
 | 样式 | 图片排版 | 表格 / 待办的默认每页记录数 |
 | --- | --- | --- |
@@ -58,15 +60,34 @@ python -m playwright install --with-deps chromium
 
 两种样式都支持显式设置 `page_size`（1～30），每页展示最多 6 个字段，通过 `column_page` 翻页。统计与随笔跟随所选样式排版；统计范围仍独立于主视图分页。图片生成后不会随查看设备自动切换样式。
 
-创建时可显式传入 `render_layout`；已有计划通过 `custom_plan_manage` 的 `update` 修改，也可以直接对话要求切换。精确命令示例（ID 和版本号须替换为查询结果）：
+创建时可显式传入 `render_layout` 和 `render_theme`；已有计划通过 `custom_plan_manage` 的 `update` 修改，也可以直接对话要求切换。`custom_plan_query` 的计划列表查询同时返回可用 `themes`、全局创建默认值，以及各计划保存的布局和主题。精确命令示例（ID 和版本号须替换为查询结果）：
 
 ```text
-/plan exec update {"plan_id":"p_实际ID","revision":3,"render_layout":"desktop"}
+/plan exec update {"plan_id":"p_实际ID","revision":3,"render_layout":"desktop","render_theme":"forest"}
 ```
 
-样式修改遵循原有权限、版本检查和撤销机制。`render_layout` 只接受 `mobile` / `desktop`，缺失或非法值会报错，不会在发送时静默套用全局配置。
+样式修改遵循原有权限、版本检查和撤销机制。`render_layout` 只接受 `mobile` / `desktop`；`render_theme` 和 `default_render_theme` 只接受已注册的主题 ID。字段缺失、非法主题或主题文件缺失会明确报错，不会在发送时静默套用全局配置或其他主题。
 
-数据库升级：首次从版本 1 升级到版本 2 时，在同一事务中为缺少 `render_layout` 的已有计划（含已删除计划）及撤销快照一次性补写 `mobile`；已有明确值保持不变。此迁移与当前插件默认值无关，不改变记录、计划版本号或更新时间，失败会回滚。之后启动不重复补写。迁移测试覆盖历史撤销、失败回滚及重复启动；版本 1 升级入口保留至明确停止支持版本 1 数据库升级时，届时可删除迁移函数并对旧版本明确报错，运行时不保留旧文档格式分支。
+数据库当前版本为 3。版本 1 升级时，为缺少 `render_layout` 的已有计划（含已删除计划）及撤销快照补写 `mobile`；版本 1、2 升级时，为缺少 `render_theme` 的同类文档补写 `forest`，保留现有绿色外观。已有合法值保持不变，非法值报错；版本 2 中缺失布局字段视为损坏，不自动补齐。迁移在同一事务中完成，与当前插件默认值无关，不改变记录、计划版本号或更新时间，失败会回滚。之后启动不重复补写。迁移测试覆盖历史撤销、失败回滚及重复启动；版本 1、2 升级入口保留至明确停止支持对应版本数据库升级时，届时删除相应迁移分支并对旧版本明确报错，运行时不保留旧文档格式分支。
+
+## 开发新主题
+
+样式分为三层，渲染时组合加载：
+
+| 位置 | 职责 |
+| --- | --- |
+| `assets/base.css` | 公共组件结构，使用 CSS 变量引用布局尺寸和主题外观 |
+| `assets/layouts/mobile.css`、`desktop.css` | 字号、间距、排列方式等布局设置 |
+| `assets/themes/forest.css` | 完整的配色、状态色、圆角和阴影变量，可按布局覆盖外观变量 |
+| `appearance.py` | 可信布局和主题注册表；布局统一定义画布宽度、默认分页、CSS 文件及模板前缀 |
+
+新增外观主题只需添加 CSS 文件并注册：
+
+1. 复制 `assets/themes/forest.css` 为新主题文件，例如 `assets/themes/midnight.css`。保留完整变量定义，修改背景、正文、卡片、达标/未达标状态、边框等颜色和圆角、阴影。主题文件只定义外观变量，尺寸与排列在布局层维护。
+2. 在 `appearance.py` 的 `THEMES` 中加入 `"midnight": Theme("深色", "themes/midnight.css")`。渲染器、字段校验、主题查询和预览脚本均从此注册表读取，无需修改业务逻辑或复制视图模板。
+3. 运行测试，并生成两种布局的四种视图预览，检查文字对比度、状态辨识和溢出。注册并重载插件后，配置 `default_render_theme` 或计划字段 `render_theme` 即可使用新主题 ID。
+
+主题文件通过注册表中固定的本地路径加载，用户只选择 ID，不能指定任意 CSS 路径。默认主题配置使用文本输入并由注册表校验，因此新增主题无需同步维护配置中的选项列表。更换主题只替换外观变量；时间轴等内容结构变化应通过视图模板实现。
 
 ## 数据与四种主视图
 
@@ -157,7 +178,7 @@ SQLite 保存于 `data/plugin_data/astrbot_plugin_custom_plan/plans.sqlite3`，�
 ## 开发验证
 
 ```sh
-python -m pip install -r requirements.txt pytest pytest-asyncio ruff
+python -m pip install -r requirements.txt pytest pytest-asyncio ruff pillow
 python -m pytest -q
 python -m ruff check .
 python -m ruff format --check .
@@ -165,4 +186,4 @@ python -m ruff format --check .
 
 设置 `CUSTOM_PLAN_BROWSER` 为本地 Chromium 可执行文件路径，可启用真实截图测试；其余测试不启动浏览器。有相邻 AstrBot 源码及其依赖时，还会执行实际插件工具注册与消息发送集成测试。所有测试使用隔离的数据目录。
 
-使用 `python scripts/preview.py --layout mobile --browser "浏览器可执行文件路径"` 可生成四种视图的示例图片，保存到 `dist/previews/mobile/`，并输出冷启动与复用浏览器后的耗时；`--layout desktop` 生成桌面版并保存到 `dist/previews/desktop/`。已安装 Playwright Chromium 时可省略 `--browser`。使用 `python scripts/package.py` 生成可导入的 ZIP，排除虚拟环境、测试数据和示例图片。
+使用 `python scripts/preview.py --theme forest --layout mobile --browser "浏览器可执行文件路径"` 可生成四种视图的示例图片，保存到 `dist/previews/forest/mobile/`，并输出冷启动与复用浏览器后的耗时；`--layout desktop` 生成桌面版并保存到 `dist/previews/forest/desktop/`。`--theme` 接受已注册的主题 ID，省略时使用 `forest`。已安装 Playwright Chromium 时可省略 `--browser`。使用 `python scripts/package.py` 生成可导入的 ZIP，排除虚拟环境、测试数据和示例图片。
