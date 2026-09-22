@@ -23,6 +23,7 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser", default="")
     parser.add_argument("--font", default="")
+    parser.add_argument("--layout", choices=("mobile", "desktop"), default="mobile")
     parser.add_argument(
         "--output",
         type=Path,
@@ -34,7 +35,8 @@ async def main():
         "font_path": args.font,
         "render_timeout": 90,
     }
-    renderer = LocalRenderer(args.output, config)
+    output = args.output / args.layout
+    renderer = LocalRenderer(output, config)
     await renderer.initialize()
     actor = Actor("preview", "demo")
     metrics = []
@@ -56,6 +58,7 @@ async def main():
                         "calendar": "日历",
                     }[kind],
                     "preset": preset,
+                    "render_layout": args.layout,
                     "goal": "每天学习一点，记录自己的进步。",
                 },
                 "Asia/Shanghai",
@@ -107,7 +110,7 @@ async def main():
             )
             started = time.perf_counter()
             image = await renderer.render(plan, {}, actor.user)
-            destination = args.output / (kind + ".png")
+            destination = output / (kind + ".png")
             image.replace(destination)
             metrics.append(
                 {

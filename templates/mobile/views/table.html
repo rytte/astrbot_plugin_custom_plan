@@ -1,0 +1,18 @@
+<div class="section-head"><h2>记录表格</h2><span class="muted">{{ view.total }} 条{{ ' · 已筛选' if view.filtered else '' }}</span></div>
+{% if not view.fields %}
+<div class="empty">还没有字段。可以说：“增加日期、学习时长和备注三个字段。”</div>
+{% else %}
+{% for row in view.rows %}
+<article class="record-card">
+  <div class="record-number">记录 {{ (view.page - 1) * view.page_size + loop.index }}</div>
+  <dl class="record-fields">
+  {% for field in view.fields %}
+    <div class="record-field"><dt>{{ field.name }}{% if field.get('unit') %}<span class="field-unit">{{ field.unit }}</span>{% endif %}</dt><dd>{{ row.cells[loop.index0] }}</dd></div>
+  {% endfor %}
+  </dl>
+</article>
+{% else %}
+<div class="empty">暂无记录，通过对话添加第一条记录。</div>
+{% endfor %}
+{% endif %}
+<div class="pager">记录第 {{ view.page }} / {{ view.pages }} 页 · 字段第 {{ view.column_page }} / {{ view.column_pages }} 页</div>

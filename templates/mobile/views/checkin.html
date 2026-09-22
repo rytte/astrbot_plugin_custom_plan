@@ -1,0 +1,15 @@
+<div class="section-head"><h2>每日打卡</h2><span class="muted">{{ view.today }} · {{ view.scope_label }}</span></div>
+<div class="check-hero">
+  <h3>{{ '今日已达标' if view.current.done else '今日尚未达标' }}</h3>
+  <div class="check-current">{{ view.current.amount | display }} <span class="muted">/ {{ view.threshold | display }} {{ view.unit }}</span></div>
+  <div class="check-streak"><span class="hero-value">{{ view.streak }}</span><span class="muted"> 天连续达标</span></div>
+</div>
+<div class="check-caption">近 28 天 · 达标 {{ view.days_done }} 天{% if view.unit %} · 单位：{{ view.unit }}{% endif %}</div>
+<div class="check-grid">
+{% for cell in view.cells %}
+  <div class="check-cell {{ cell.state }} {{ 'today' if cell.today else '' }}">
+    <span>{{ cell.label }}</span><span class="check-mark">{{ '✓' if cell.state == 'done' else '○' if cell.state == 'partial' else '—' }}</span><span class="check-amount">{{ cell.amount }}</span>
+  </div>
+{% endfor %}
+</div>
+<div class="legend"><span>✓ 达标 · ○ 未达标 · — 未记录</span><span>描边为今天</span><span>连续天数截至今天，今天未达标时截至昨天</span>{% if view.filtered %}<span>已应用主视图筛选</span>{% endif %}</div>

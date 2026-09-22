@@ -45,6 +45,7 @@ class CustomPlanPlugin(Star):
         self.storage = Storage(
             StarTools.get_data_dir("astrbot_plugin_custom_plan") / "plans.sqlite3",
             self.settings.get("timezone", "Asia/Shanghai"),
+            self.settings.get("default_render_layout", "mobile"),
         )
         self.renderer = LocalRenderer(
             Path(get_astrbot_temp_path()) / "custom_plan", self.settings
@@ -149,7 +150,7 @@ class CustomPlanPlugin(Star):
 
         Args:
             operation(string): create、update、delete 或 undo。
-            params(object): create: {name,goal?,preset?:generic/checkin/goal/todo,scope?:person/group,mode?,timezone?,target?,unit?}；私聊默认person/private，群聊默认group/protected。群内个人计划须显式mode=shared，其图片会对全群可见。update: {plan_id,revision,name?,goal?,mode?,timezone?}。delete/undo: {plan_id,revision}。public群员具有全部写权限，包括删除。undo仅撤销当前最近一次非创建、非撤销操作；版本冲突须重查，不盲目重试。
+            params(object): create: {name,goal?,preset?:generic/checkin/goal/todo,scope?:person/group,mode?,timezone?,target?,unit?,render_layout?:mobile/desktop}；render_layout省略时使用插件配置default_render_layout并存入计划，后续不随插件配置改变。私聊默认person/private，群聊默认group/protected。群内个人计划须显式mode=shared，其图片会对全群可见。update: {plan_id,revision,name?,goal?,mode?,timezone?,render_layout?:mobile/desktop}，修改render_layout后该计划默认按新样式发送。delete/undo: {plan_id,revision}。public群员具有全部写权限，包括删除。undo仅撤销当前最近一次非创建、非撤销操作；版本冲突须重查，不盲目重试。
         """
         if operation not in MANAGE_ACTIONS:
             return encode(
@@ -195,7 +196,7 @@ class CustomPlanPlugin(Star):
 
         Args:
             plan_id(string): 查询得到的计划ID。
-            options(object): 可留空。page默认1，page_size为1～30且默认20，column_page默认1（表格每页6列），month为YYYY-MM（日历月份）。
+            options(object): 可留空。page默认1，page_size为1～30（移动版默认8，桌面版默认20），column_page默认1（每页6个字段，移动版纵向排成卡片），month为YYYY-MM（日历月份）。使用计划中保存的render_layout；需要改变默认样式时通过custom_plan_manage的update修改该计划。
         """
         path = None
         try:

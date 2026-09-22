@@ -7,7 +7,14 @@ import math
 from collections import defaultdict
 from datetime import date, timedelta
 
-from .domain import PlanError, month_bounds, object_keys, select_records, today
+from .domain import (
+    PlanError,
+    month_bounds,
+    object_keys,
+    select_records,
+    today,
+    validate_render_layout,
+)
 
 VIEW_TEMPLATES = {
     name: f"views/{name}.html" for name in ("table", "checkin", "todo", "calendar")
@@ -63,9 +70,10 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
         Template data containing a view and independently computed blocks.
     """
     object_keys(options, {"page", "page_size", "column_page", "month"}, "看板选项")
+    layout = validate_render_layout(plan.get("render_layout"))
     page, size, column_page = (
         options.get("page", 1),
-        options.get("page_size", 20),
+        options.get("page_size", 8 if layout == "mobile" else 20),
         options.get("column_page", 1),
     )
     if (
@@ -110,6 +118,7 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
         "visible": config.get("visible", True),
         "total": len(records),
         "page": page,
+        "page_size": size,
         "pages": page_count,
         "filtered": bool(config.get("filters")),
         "today": current_day.isoformat(),

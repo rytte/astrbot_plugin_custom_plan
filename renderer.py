@@ -39,7 +39,13 @@ class LocalRenderer:
         self.closed = False
         self.tasks: set[asyncio.Task] = set()
         self.font_css = ""
-        self.styles = (self.root / "assets" / "board.css").read_text(encoding="utf-8")
+        base_styles = (self.root / "assets" / "board.css").read_text(encoding="utf-8")
+        self.styles = {
+            "desktop": base_styles,
+            "mobile": base_styles
+            + "\n"
+            + (self.root / "assets" / "mobile.css").read_text(encoding="utf-8"),
+        }
 
     async def initialize(self):
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -57,8 +63,15 @@ class LocalRenderer:
 
     def html(self, plan: dict, options: dict, actor_user: str) -> str:
         data = build_view(plan, options, actor_user)
+        layout = plan["render_layout"]
+        if layout == "mobile":
+            data["view"]["template"] = "mobile/" + data["view"]["template"]
         return self.environment.get_template("board.html").render(
-            **data, styles=self.styles, font_css=self.font_css, generated_at=now_iso()
+            **data,
+            styles=self.styles[layout],
+            font_css=self.font_css,
+            layout=layout,
+            generated_at=now_iso(),
         )
 
     async def render(self, plan: dict, options: dict, actor_user: str) -> Path:
@@ -101,7 +114,10 @@ class LocalRenderer:
                             ]
                         self.browser = await self.playwright.chromium.launch(**launch)
                     context = await self.browser.new_context(
-                        viewport={"width": 1000, "height": 800},
+                        viewport={
+                            "width": 640 if plan["render_layout"] == "mobile" else 1000,
+                            "height": 800,
+                        },
                         device_scale_factor=1,
                         java_script_enabled=False,
                         service_workers="block",

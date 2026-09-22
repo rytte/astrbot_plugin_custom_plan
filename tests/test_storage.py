@@ -1,4 +1,6 @@
 import asyncio
+import json
+import sqlite3
 from copy import deepcopy
 from datetime import date, timedelta
 
@@ -7,6 +9,155 @@ from astrbot_plugin_custom_plan.domain import Actor, PlanError, allowed, create_
 from astrbot_plugin_custom_plan.presentation import build_view
 
 OWNER = Actor("qq-1", "owner")
+
+
+async def test_plan_layout_is_persisted_independent_of_creation_default(storage):
+    from astrbot_plugin_custom_plan.storage import Storage
+
+    created = await storage.mutate(OWNER, "create", {"name": "手机"}, message_key="c")
+    pid = created["plan_id"]
+    reopened = Storage(storage.path, default_render_layout="desktop")
+    await reopened.initialize()
+    assert (await reopened.snapshot(pid, OWNER))["render_layout"] == "mobile"
+    desktop = await reopened.mutate(OWNER, "create", {"name": "桌面"}, message_key="d")
+    assert (await reopened.snapshot(desktop["plan_id"], OWNER))[
+        "render_layout"
+    ] == "desktop"
+    explicit = await reopened.mutate(
+        OWNER, "create", {"name": "指定", "render_layout": "mobile"}, message_key="e"
+    )
+    assert (await reopened.snapshot(explicit["plan_id"], OWNER))[
+        "render_layout"
+    ] == "mobile"
+    await reopened.mutate(OWNER, "update", {"render_layout": "desktop"}, pid, 1, "u")
+    assert (await storage.query(OWNER, {"plan_id": pid}))["render_layout"] == "desktop"
+    assert (await reopened.query(OWNER, {}))["default_render_layout"] == "desktop"
+    with pytest.raises(PlanError, match="版本冲突"):
+        await reopened.mutate(
+            OWNER, "update", {"render_layout": "mobile"}, pid, 1, "stale"
+        )
+    await reopened.mutate(OWNER, "undo", {}, pid, 2, "undo")
+    assert (await storage.snapshot(pid, OWNER))["render_layout"] == "mobile"
+
+
+@pytest.mark.parametrize("value", [None, "", "auto", "MOBILE", 1, [], {}])
+async def test_invalid_layout_rejected_without_writes(storage, value):
+    from astrbot_plugin_custom_plan.storage import Storage
+
+    with pytest.raises(PlanError, match="default_render_layout"):
+        Storage(storage.path, default_render_layout=value)
+    with pytest.raises(PlanError, match="render_layout"):
+        await storage.mutate(
+            OWNER, "create", {"name": "无效", "render_layout": value}, message_key="bad"
+        )
+    assert (await storage.query(OWNER, {}))["total"] == 0
+    created = await storage.mutate(OWNER, "create", {"name": "有效"}, message_key="ok")
+    with pytest.raises(PlanError, match="render_layout"):
+        await storage.mutate(
+            OWNER, "update", {"render_layout": value}, created["plan_id"], 1, "bad-u"
+        )
+    snapshot = await storage.snapshot(created["plan_id"], OWNER)
+    assert snapshot["revision"] == 1 and snapshot["render_layout"] == "mobile"
+
+
+async def test_layout_migration_covers_deleted_plans_and_undo_and_runs_once(storage):
+    from astrbot_plugin_custom_plan.storage import Storage
+
+    created = await storage.mutate(
+        OWNER, "create", {"name": "历史计划", "preset": "todo"}, message_key="c"
+    )
+    pid = created["plan_id"]
+    await storage.mutate(
+        OWNER,
+        "add_records",
+        {"records": [{"values": {"title": "保留记录"}}]},
+        pid,
+        1,
+        "r",
+    )
+    await storage.mutate(OWNER, "delete", {}, pid, 2, "delete")
+    before = await storage.snapshot(pid, OWNER, include_deleted=True)
+    # Reproduce v1 documents using the unchanged v1 SQL table schema.
+    with sqlite3.connect(storage.path) as connection:
+        for table, column in (("plans", "document"), ("changes", "previous")):
+            for rowid, raw in connection.execute(
+                f"SELECT rowid, {column} FROM {table} WHERE {column} IS NOT NULL"
+            ).fetchall():
+                document = json.loads(raw)
+                document.pop("render_layout")
+                connection.execute(
+                    f"UPDATE {table} SET {column}=? WHERE rowid=?",
+                    (json.dumps(document), rowid),
+                )
+        connection.execute("PRAGMA user_version=1")
+    upgraded = Storage(storage.path, default_render_layout="desktop")
+    await upgraded.initialize()
+    assert await upgraded.snapshot(pid, OWNER, include_deleted=True) == before
+    with sqlite3.connect(storage.path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert all(
+            json.loads(row[0])["render_layout"] == "mobile"
+            for row in connection.execute(
+                "SELECT previous FROM changes WHERE previous IS NOT NULL"
+            )
+        )
+    await upgraded.mutate(OWNER, "undo", {}, pid, 3, "restore")
+    restored = await upgraded.snapshot(pid, OWNER)
+    assert (
+        restored["records"] == before["records"]
+        and restored["render_layout"] == "mobile"
+    )
+    await upgraded.mutate(
+        OWNER, "update", {"render_layout": "desktop"}, pid, 4, "desktop"
+    )
+    await upgraded.initialize()
+    assert (await upgraded.snapshot(pid, OWNER))["render_layout"] == "desktop"
+
+
+async def test_layout_migration_is_atomic_and_preserves_explicit_layout(storage):
+    first = await storage.mutate(OWNER, "create", {"name": "缺失"}, message_key="1")
+    second = await storage.mutate(
+        OWNER, "create", {"name": "显式", "render_layout": "desktop"}, message_key="2"
+    )
+    with sqlite3.connect(storage.path) as connection:
+        first_doc = await storage.snapshot(first["plan_id"], OWNER)
+        first_doc.pop("render_layout")
+        second_doc = await storage.snapshot(second["plan_id"], OWNER)
+        second_doc["render_layout"] = "invalid"
+        connection.executemany(
+            "UPDATE plans SET document=? WHERE plan_id=?",
+            [
+                (json.dumps(first_doc), first["plan_id"]),
+                (json.dumps(second_doc), second["plan_id"]),
+            ],
+        )
+        connection.execute("PRAGMA user_version=1")
+    with pytest.raises(PlanError, match="render_layout"):
+        await storage.initialize()
+    assert "render_layout" not in await storage.snapshot(first["plan_id"], OWNER)
+    with sqlite3.connect(storage.path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        second_doc["render_layout"] = "desktop"
+        connection.execute(
+            "UPDATE plans SET document=? WHERE plan_id=?",
+            (json.dumps(second_doc), second["plan_id"]),
+        )
+    await storage.initialize()
+    assert (await storage.snapshot(first["plan_id"], OWNER))[
+        "render_layout"
+    ] == "mobile"
+    assert (await storage.snapshot(second["plan_id"], OWNER))[
+        "render_layout"
+    ] == "desktop"
+
+
+async def test_future_database_version_is_not_downgraded(storage):
+    with sqlite3.connect(storage.path) as connection:
+        connection.execute("PRAGMA user_version=3")
+    with pytest.raises(PlanError, match="数据库版本"):
+        await storage.initialize()
+    with sqlite3.connect(storage.path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
 
 
 @pytest.mark.parametrize(

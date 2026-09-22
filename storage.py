@@ -22,6 +22,7 @@ from .domain import (
     select_records,
     today,
     validate_plan,
+    validate_render_layout,
 )
 
 
@@ -42,9 +43,17 @@ class Storage:
     transaction serializes revisions across instances as well as async tasks.
     """
 
-    def __init__(self, path: Path, timezone: str = "Asia/Shanghai"):
+    def __init__(
+        self,
+        path: Path,
+        timezone: str = "Asia/Shanghai",
+        default_render_layout: str = "mobile",
+    ):
         self.path = Path(path)
         self.timezone = timezone
+        self.default_render_layout = validate_render_layout(
+            default_render_layout, "default_render_layout"
+        )
 
     @contextmanager
     def _connect(self):
@@ -64,16 +73,23 @@ class Storage:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
-            connection.executescript("""
-                CREATE TABLE IF NOT EXISTS plans (
+            connection.execute("BEGIN IMMEDIATE")
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (0, 1, 2):
+                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 2。")
+            if version == 2:
+                return
+            if version == 0:
+                for statement in (
+                    """CREATE TABLE plans (
                     plan_id TEXT PRIMARY KEY,
                     platform TEXT NOT NULL,
                     owner TEXT NOT NULL,
                     group_id TEXT NOT NULL,
                     document TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS plans_scope ON plans(platform, owner, group_id);
-                CREATE TABLE IF NOT EXISTS changes (
+                    )""",
+                    "CREATE INDEX plans_scope ON plans(platform, owner, group_id)",
+                    """CREATE TABLE changes (
                     plan_id TEXT NOT NULL,
                     revision INTEGER NOT NULL,
                     actor TEXT NOT NULL,
@@ -82,16 +98,37 @@ class Storage:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY(plan_id, revision),
                     FOREIGN KEY(plan_id) REFERENCES plans(plan_id)
-                );
-                CREATE TABLE IF NOT EXISTS requests (
+                    )""",
+                    """CREATE TABLE requests (
                     request_key TEXT PRIMARY KEY,
                     plan_id TEXT NOT NULL,
                     result TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(plan_id) REFERENCES plans(plan_id)
-                );
-                PRAGMA user_version=1;
-            """)
+                    )""",
+                ):
+                    connection.execute(statement)
+            else:
+                self._migrate_render_layout(connection)
+            connection.execute("PRAGMA user_version=2")
+
+    @staticmethod
+    def _migrate_render_layout(connection) -> None:
+        """Upgrade v1 documents and undo snapshots once; never resolve at read time."""
+        for table, column in (("plans", "document"), ("changes", "previous")):
+            rows = connection.execute(
+                f"SELECT rowid, {column} FROM {table} WHERE {column} IS NOT NULL"
+            ).fetchall()
+            for row in rows:
+                document = json.loads(row[column])
+                if "render_layout" in document:
+                    validate_render_layout(document["render_layout"])
+                    continue
+                document["render_layout"] = "mobile"
+                connection.execute(
+                    f"UPDATE {table} SET {column}=? WHERE rowid=?",
+                    (encode(document), row["rowid"]),
+                )
 
     def _load(
         self,
@@ -165,6 +202,7 @@ class Storage:
                                     "scope",
                                     "mode",
                                     "preset",
+                                    "render_layout",
                                     "revision",
                                     "deleted",
                                 )
@@ -176,6 +214,7 @@ class Storage:
                     "page": page,
                     "page_size": size,
                     "default_view": "table",
+                    "default_render_layout": self.default_render_layout,
                     "timezone": self.timezone,
                     "today": today({"timezone": self.timezone}).isoformat(),
                     "presets": ["generic", "checkin", "goal", "todo"],
@@ -279,7 +318,9 @@ class Storage:
                     raise PlanError(
                         "每位用户最多创建 100 个计划（含可恢复的已删除计划）。"
                     )
-                plan = create_plan(actor, params, self.timezone)
+                plan = create_plan(
+                    actor, params, self.timezone, self.default_render_layout
+                )
             else:
                 plan = self._load(
                     connection, plan_id, actor, write=True, deleted=action == "undo"
@@ -342,6 +383,7 @@ class Storage:
                 "plan_id": plan["plan_id"],
                 "revision": plan["revision"],
                 "changed_ids": changed,
+                "render_layout": plan["render_layout"],
                 "deleted": plan["deleted"],
             }
             connection.execute(

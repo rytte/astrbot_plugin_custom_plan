@@ -104,20 +104,44 @@ def field(field_id: str, name: str, kind: str, **kwargs) -> dict:
     }
 
 
-def create_plan(actor: Actor, params: dict, default_timezone: str) -> dict:
+def validate_render_layout(value, label: str = "render_layout") -> str:
+    if value not in ("mobile", "desktop"):
+        raise PlanError(
+            f"{label} 必须明确设置为 mobile（移动版）或 desktop（桌面版）。"
+        )
+    return value
+
+
+def create_plan(
+    actor: Actor,
+    params: dict,
+    default_timezone: str,
+    default_render_layout: str = "mobile",
+) -> dict:
     """Build a preset with one dataset and a default table view.
 
     Args:
         actor: Trusted event identity.
         params: Validated creation parameters, never ownership identifiers.
         default_timezone: Administrator-selected default timezone.
+        default_render_layout: Initial layout stored in the new plan.
 
     Returns:
         A complete document ready for transactional storage.
     """
     object_keys(
         params,
-        {"name", "goal", "preset", "scope", "mode", "timezone", "target", "unit"},
+        {
+            "name",
+            "goal",
+            "preset",
+            "scope",
+            "mode",
+            "timezone",
+            "target",
+            "unit",
+            "render_layout",
+        },
         "创建参数",
     )
     preset = params.get("preset", "generic")
@@ -141,6 +165,7 @@ def create_plan(actor: Actor, params: dict, default_timezone: str) -> dict:
         "name": params.get("name", ""),
         "goal": params.get("goal", ""),
         "timezone": params.get("timezone", default_timezone),
+        "render_layout": params.get("render_layout", default_render_layout),
         "preset": preset,
         "revision": 1,
         "created_at": timestamp,
@@ -295,6 +320,7 @@ def validate_plan(plan: dict) -> None:
     """
     text(plan["name"], "名称", 80, False)
     text(plan["goal"], "目标", 500)
+    validate_render_layout(plan.get("render_layout"))
     try:
         ZoneInfo(text(plan["timezone"], "时区", 80, False))
     except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -495,7 +521,9 @@ def apply_change(plan: dict, action: str, params: dict, actor: Actor) -> list[st
     """
     changed = []
     if action == "update":
-        object_keys(params, {"name", "goal", "mode", "timezone"}, "计划修改")
+        object_keys(
+            params, {"name", "goal", "mode", "timezone", "render_layout"}, "计划修改"
+        )
         if (
             "timezone" in params
             and params["timezone"] != plan["timezone"]

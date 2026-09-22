@@ -25,9 +25,12 @@ OWNER = Actor("qq", "owner")
         ("calendar", "todo"),
     ],
 )
-def test_all_templates_empty_and_populated(tmp_path, kind, preset):
+@pytest.mark.parametrize("layout", ["mobile", "desktop"])
+def test_all_templates_empty_and_populated(tmp_path, kind, preset, layout):
     plan = create_plan(
-        OWNER, {"name": "九月学习计划", "preset": preset}, "Asia/Shanghai"
+        OWNER,
+        {"name": "九月学习计划", "preset": preset, "render_layout": layout},
+        "Asia/Shanghai",
     )
     apply_change(plan, "view", {"type": kind}, OWNER)
     renderer = LocalRenderer(tmp_path, {})
@@ -50,10 +53,13 @@ def test_all_templates_empty_and_populated(tmp_path, kind, preset):
     assert '<main class="board">' in populated
 
 
-def test_html_escaping_notes_and_unknown_template_rejection(tmp_path):
+@pytest.mark.parametrize("layout", ["mobile", "desktop"])
+def test_html_escaping_notes_and_unknown_template_rejection(tmp_path, layout):
     attack = '<img src="https://example.invalid/leak"><script>alert(1)</script>{{7*7}}'
     plan = create_plan(
-        OWNER, {"name": "<script>x</script>", "goal": attack}, "Asia/Shanghai"
+        OWNER,
+        {"name": "<script>x</script>", "goal": attack, "render_layout": layout},
+        "Asia/Shanghai",
     )
     apply_change(
         plan, "block_add", {"type": "notes", "config": {"text": attack}}, OWNER
@@ -175,6 +181,31 @@ async def test_renderer_disabled_and_queue_limits(tmp_path):
         await renderer.render(plan, {}, OWNER.user)
 
 
+def test_layout_controls_default_paging_but_explicit_options_win(tmp_path):
+    plan = create_plan(OWNER, {"name": "分页", "preset": "todo"}, "Asia/Shanghai")
+    apply_change(
+        plan,
+        "add_records",
+        {"records": [{"values": {"title": f"任务{i}"}} for i in range(21)]},
+        OWNER,
+    )
+    options = {"page": 2}
+    renderer = LocalRenderer(tmp_path, {})
+    for layout, size, pages in (("mobile", 8, 3), ("desktop", 20, 2), ("mobile", 8, 3)):
+        apply_change(plan, "update", {"render_layout": layout}, OWNER)
+        view = build_view(plan, {}, OWNER.user)["view"]
+        assert len(view["rows"]) == size and view["pages"] == pages
+        assert len(build_view(plan, {"page_size": 3}, OWNER.user)["view"]["rows"]) == 3
+        html = renderer.html(plan, options, OWNER.user)
+        assert f'<body class="{layout}">' in html
+        if layout == "mobile":
+            assert "记录 9" in html and "记录 17" not in html
+        assert options == {"page": 2}
+    plan.pop("render_layout")
+    with pytest.raises(PlanError, match="render_layout"):
+        renderer.html(plan, {}, OWNER.user)
+
+
 @pytest.mark.skipif(
     not os.environ.get("CUSTOM_PLAN_BROWSER"),
     reason="Set CUSTOM_PLAN_BROWSER to run real local Chromium screenshots",
@@ -204,13 +235,17 @@ async def test_real_screenshots_offline_cleanup_and_browser_reuse(tmp_path):
                 else {"amount": 2}
             )
             apply_change(plan, "add_records", {"records": [{"values": values}]}, OWNER)
-            path = await renderer.render(plan, {"month": "2026-09"}, OWNER.user)
-            assert path.read_bytes().startswith(b"\x89PNG")
-            assert renderer.browser.contexts == []
-            if browser is not None:
-                assert renderer.browser is browser
-            browser = renderer.browser
-            path.unlink()
+            for layout, width in (("mobile", 640), ("desktop", 1000)):
+                apply_change(plan, "update", {"render_layout": layout}, OWNER)
+                path = await renderer.render(plan, {"month": "2026-09"}, OWNER.user)
+                png = path.read_bytes()
+                assert png.startswith(b"\x89PNG")
+                assert int.from_bytes(png[16:20], "big") == width
+                assert renderer.browser.contexts == []
+                if browser is not None:
+                    assert renderer.browser is browser
+                browser = renderer.browser
+                path.unlink()
         assert renderer.pending == 0
         assert not list(Path(tmp_path).glob("*.png"))
     finally:

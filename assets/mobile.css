@@ -1,0 +1,68 @@
+/* Mobile images are laid out before capture; no client-side breakpoint is needed. */
+body.mobile {
+  font-size: 26px;
+  line-height: 1.55;
+}
+
+.mobile .board { width: 640px; padding: 24px; }
+.mobile .header { padding: 4px 4px 24px; }
+.mobile .eyebrow { font-size: 18px; letter-spacing: 3px; }
+.mobile h1 { font-size: 38px; margin: 10px 0 14px; }
+.mobile h2 { font-size: 30px; line-height: 1.4; }
+.mobile h3 { font-size: 26px; }
+.mobile .meta,
+.mobile .muted { font-size: 22px; }
+.mobile .meta { gap: 6px 16px; margin-top: 14px; }
+.mobile .panel { border-radius: 20px; padding: 24px; margin-bottom: 20px; }
+.mobile .section-head { flex-wrap: wrap; gap: 6px 16px; margin-bottom: 20px; }
+.mobile .section-head > * { min-width: 0; overflow-wrap: anywhere; }
+.mobile .empty { padding: 20px 0; }
+.mobile .pager { font-size: 20px; margin-top: 22px; overflow-wrap: anywhere; }
+
+.mobile .record-card { padding: 18px; background: #f4f7f4; border-radius: 14px; }
+.mobile .record-card + .record-card { margin-top: 14px; }
+.mobile .record-number { font-size: 20px; color: #55725e; margin-bottom: 10px; }
+.mobile .record-fields { margin: 0; }
+.mobile .record-field { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 10px 0; }
+.mobile .record-field + .record-field { border-top: 1px solid #dde7df; }
+.mobile .record-field dt { color: #5c7163; font-size: 22px; }
+.mobile .record-field dd { margin: 0; font-size: 26px; white-space: pre-wrap; }
+.mobile .record-field dt,
+.mobile .record-field dd { min-width: 0; overflow-wrap: anywhere; }
+.mobile .field-unit { display: block; font-size: 20px; }
+
+.mobile .task { gap: 14px; padding: 20px 0; }
+.mobile .task-mark { flex-basis: 32px; font-size: 30px; line-height: 1.5; }
+.mobile .task-title { font-size: 28px; font-weight: 600; margin-bottom: 6px; }
+.mobile .task-body > * { overflow-wrap: anywhere; }
+.mobile .task-date { margin-top: 8px; font-size: 22px; white-space: normal; }
+.mobile .task-id { margin-top: 8px; font-size: 18px; }
+
+.mobile .check-hero { display: block; padding: 22px; border-radius: 16px; margin: 0 0 22px; }
+.mobile .check-current { font-size: 42px; line-height: 1.35; color: #286d4e; overflow-wrap: anywhere; margin: 10px 0; }
+.mobile .check-streak { border-top: 1px solid #cbded0; padding-top: 14px; margin-top: 16px; }
+.mobile .hero-value { font-size: 36px; }
+.mobile .check-caption { font-size: 22px; margin-bottom: 12px; color: #5c7163; }
+.mobile .check-grid { gap: 6px; }
+.mobile .check-cell { min-width: 0; padding: 12px 2px; font-size: 20px; overflow-wrap: anywhere; }
+.mobile .check-mark { font-size: 28px; margin: 5px 0; }
+.mobile .check-amount { display: block; }
+.mobile .legend { font-size: 20px; gap: 8px 16px; margin-top: 20px; }
+
+.mobile .calendar { gap: 6px; }
+.mobile .weekday { font-size: 22px; padding: 6px 0; }
+.mobile .calendar-day { min-width: 0; min-height: 82px; padding: 8px 2px; text-align: center; font-size: 26px; }
+.mobile .calendar-day.today { background: #e7f3e9; }
+.mobile .calendar-count { display: block; font-size: 18px; color: #315f43; margin-top: 4px; }
+.mobile .calendar-key { font-size: 20px; color: #5c7163; margin-top: 14px; }
+.mobile .agenda { margin-top: 26px; }
+.mobile .agenda-day { padding: 18px 0; border-top: 1px solid #e0e9e2; }
+.mobile .agenda-date { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 14px; color: #315f43; font-size: 22px; margin-bottom: 8px; }
+.mobile .agenda-label { margin-top: 6px; padding-left: 16px; border-left: 3px solid #9cbfa7; overflow-wrap: anywhere; }
+.mobile .calendar-more { font-size: 20px; }
+
+.mobile .metric { font-size: 48px; overflow-wrap: anywhere; }
+.mobile .metric-unit { font-size: 24px; }
+.mobile .progress { height: 14px; border-radius: 8px; }
+.mobile .footer { font-size: 18px; gap: 8px; padding: 4px; }
+.mobile .footer > span { display: block; width: 100%; overflow-wrap: anywhere; }
