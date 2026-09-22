@@ -51,7 +51,14 @@ python -m playwright install --with-deps chromium
 
 插件配置 `default_render_layout` 决定**创建计划时**的初始样式，默认 `mobile`。创建时会把选定样式写入 SQLite 中该计划文档的 `render_layout` 字段；以后发送图片直接使用该字段。调整插件配置只影响之后创建的计划，不会改变已有计划。
 
-主题独立保存为 `render_theme`，创建时取插件配置 `default_render_theme`，当前默认且内置的主题为 `forest`（清新绿）。同一主题可用于移动版和桌面版，也适用于表格、打卡、待办、日历、统计和随笔。更改主题不改变布局、分页或记录内容，更改全局默认主题不影响已有计划。
+主题独立保存为 `render_theme`，创建时取插件配置 `default_render_theme`，默认 `forest`（清新绿）。同一主题可用于移动版和桌面版，也适用于表格、打卡、待办、日历、统计和随笔。更改主题不改变布局、分页或记录内容，更改全局默认主题不影响已有计划。
+
+| 主题 ID | 名称 | 外观 |
+| --- | --- | --- |
+| `forest` | 清新绿（默认） | 浅绿背景、白色卡片、绿色强调 |
+| `midnight` | 深色 | 深蓝背景、分层暗色卡片、浅蓝强调；达标使用薄荷绿，未达标使用琥珀色 |
+
+可以直接对话：“把这个计划切换为深色主题”，或“把这个计划换回清新绿”。希望新计划默认使用深色时，将插件配置 `default_render_theme` 设为 `midnight` 后重载；已有计划仍使用自己保存的主题。图片采用生成时指定的主题，不随设备深色模式自动切换。
 
 | 样式 | 图片排版 | 表格 / 待办的默认每页记录数 |
 | --- | --- | --- |
@@ -66,6 +73,12 @@ python -m playwright install --with-deps chromium
 /plan exec update {"plan_id":"p_实际ID","revision":3,"render_layout":"desktop","render_theme":"forest"}
 ```
 
+仅修改主题、保留当前布局：
+
+```text
+/plan exec update {"plan_id":"p_实际ID","revision":3,"render_theme":"midnight"}
+```
+
 样式修改遵循原有权限、版本检查和撤销机制。`render_layout` 只接受 `mobile` / `desktop`；`render_theme` 和 `default_render_theme` 只接受已注册的主题 ID。字段缺失、非法主题或主题文件缺失会明确报错，不会在发送时静默套用全局配置或其他主题。
 
 数据库当前版本为 3。版本 1 升级时，为缺少 `render_layout` 的已有计划（含已删除计划）及撤销快照补写 `mobile`；版本 1、2 升级时，为缺少 `render_theme` 的同类文档补写 `forest`，保留现有绿色外观。已有合法值保持不变，非法值报错；版本 2 中缺失布局字段视为损坏，不自动补齐。迁移在同一事务中完成，与当前插件默认值无关，不改变记录、计划版本号或更新时间，失败会回滚。之后启动不重复补写。迁移测试覆盖历史撤销、失败回滚及重复启动；版本 1、2 升级入口保留至明确停止支持对应版本数据库升级时，届时删除相应迁移分支并对旧版本明确报错，运行时不保留旧文档格式分支。
@@ -78,13 +91,13 @@ python -m playwright install --with-deps chromium
 | --- | --- |
 | `assets/base.css` | 公共组件结构，使用 CSS 变量引用布局尺寸和主题外观 |
 | `assets/layouts/mobile.css`、`desktop.css` | 字号、间距、排列方式等布局设置 |
-| `assets/themes/forest.css` | 完整的配色、状态色、圆角和阴影变量，可按布局覆盖外观变量 |
+| `assets/themes/forest.css`、`midnight.css` | 各主题完整的配色、状态色、圆角和阴影变量，可按布局覆盖外观变量 |
 | `appearance.py` | 可信布局和主题注册表；布局统一定义画布宽度、默认分页、CSS 文件及模板前缀 |
 
 新增外观主题只需添加 CSS 文件并注册：
 
-1. 复制 `assets/themes/forest.css` 为新主题文件，例如 `assets/themes/midnight.css`。保留完整变量定义，修改背景、正文、卡片、达标/未达标状态、边框等颜色和圆角、阴影。主题文件只定义外观变量，尺寸与排列在布局层维护。
-2. 在 `appearance.py` 的 `THEMES` 中加入 `"midnight": Theme("深色", "themes/midnight.css")`。渲染器、字段校验、主题查询和预览脚本均从此注册表读取，无需修改业务逻辑或复制视图模板。
+1. 复制 `assets/themes/forest.css` 为新主题文件，例如 `assets/themes/paper.css`。保留完整变量定义，修改背景、正文、卡片、达标/未达标状态、边框等颜色和圆角、阴影。主题文件只定义外观变量，尺寸与排列在布局层维护。
+2. 在 `appearance.py` 的 `THEMES` 中加入 `"paper": Theme("纸张", "themes/paper.css")`。渲染器、字段校验、主题查询和预览脚本均从此注册表读取，无需修改业务逻辑或复制视图模板。
 3. 运行测试，并生成两种布局的四种视图预览，检查文字对比度、状态辨识和溢出。注册并重载插件后，配置 `default_render_theme` 或计划字段 `render_theme` 即可使用新主题 ID。
 
 主题文件通过注册表中固定的本地路径加载，用户只选择 ID，不能指定任意 CSS 路径。默认主题配置使用文本输入并由注册表校验，因此新增主题无需同步维护配置中的选项列表。更换主题只替换外观变量；时间轴等内容结构变化应通过视图模板实现。
@@ -187,3 +200,5 @@ python -m ruff format --check .
 设置 `CUSTOM_PLAN_BROWSER` 为本地 Chromium 可执行文件路径，可启用真实截图测试；其余测试不启动浏览器。有相邻 AstrBot 源码及其依赖时，还会执行实际插件工具注册与消息发送集成测试。所有测试使用隔离的数据目录。
 
 使用 `python scripts/preview.py --theme forest --layout mobile --browser "浏览器可执行文件路径"` 可生成四种视图的示例图片，保存到 `dist/previews/forest/mobile/`，并输出冷启动与复用浏览器后的耗时；`--layout desktop` 生成桌面版并保存到 `dist/previews/forest/desktop/`。`--theme` 接受已注册的主题 ID，省略时使用 `forest`。已安装 Playwright Chromium 时可省略 `--browser`。使用 `python scripts/package.py` 生成可导入的 ZIP，排除虚拟环境、测试数据和示例图片。
+
+深色预览使用 `--theme midnight`，例如 `python scripts/preview.py --theme midnight --layout mobile`，输出到 `dist/previews/midnight/mobile/`。

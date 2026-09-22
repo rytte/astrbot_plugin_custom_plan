@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -176,6 +177,66 @@ async def test_text_fallback_and_image_cleanup(plugin, tmp_path, monkeypatch):
     result = json.loads(await plugin.custom_plan_render(event, created["plan_id"], {}))
     assert result["result"]["sent"] == "image"
     assert not image.exists()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("CUSTOM_PLAN_BROWSER"), reason="Requires local Chromium"
+)
+async def test_midnight_switch_restart_render_and_undo_through_tools(plugin):
+    from astrbot_plugin_custom_plan.renderer import LocalRenderer
+    from astrbot_plugin_custom_plan.storage import Storage
+    from PIL import Image
+
+    created = json.loads(
+        await plugin.custom_plan_manage(
+            Event(message="create"), "create", {"name": "主题切换", "preset": "todo"}
+        )
+    )
+    assert created["ok"]
+    pid = created["result"]["plan_id"]
+    changed = json.loads(
+        await plugin.custom_plan_manage(
+            Event(message="theme"),
+            "update",
+            {"plan_id": pid, "revision": 1, "render_theme": "midnight"},
+        )
+    )
+    assert changed["ok"] and changed["result"]["render_theme"] == "midnight"
+    # Reopen storage and renderer with a different creation default to simulate restart.
+    plugin.storage = Storage(plugin.storage.path, default_render_theme="forest")
+    await plugin.storage.initialize()
+    await plugin.renderer.close()
+    plugin.renderer = LocalRenderer(
+        plugin.renderer.directory,
+        {"browser_executable": os.environ["CUSTOM_PLAN_BROWSER"], "render_timeout": 90},
+    )
+    await plugin.renderer.initialize()
+    for theme, color in (("midnight", (11, 18, 32)), ("forest", (237, 243, 239))):
+        if theme == "forest":
+            undone = json.loads(
+                await plugin.custom_plan_manage(
+                    Event(message="undo-theme"), "undo", {"plan_id": pid, "revision": 2}
+                )
+            )
+            assert undone["ok"]
+        state = json.loads(await plugin.custom_plan_query(Event(), {"plan_id": pid}))
+        assert state["result"]["render_theme"] == theme
+        assert state["result"]["render_layout"] == "mobile"
+        event = Event()
+        sent_paths = []
+
+        async def capture(message):
+            assert message[0] == "image"
+            path = Path(message[1])
+            with Image.open(path) as image:
+                assert image.width == 640
+                assert image.convert("RGB").getpixel((0, 0)) == color
+            sent_paths.append(path)
+
+        event.send = capture
+        result = json.loads(await plugin.custom_plan_render(event, pid, {}))
+        assert result["ok"] and result["result"]["sent"] == "image"
+        assert len(sent_paths) == 1 and not sent_paths[0].exists()
 
 
 @pytest.mark.parametrize("fail_render", [False, True])

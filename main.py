@@ -152,7 +152,7 @@ class CustomPlanPlugin(Star):
 
         Args:
             operation(string): create、update、delete 或 undo。
-            params(object): create: {name,goal?,preset?:generic/checkin/goal/todo,scope?:person/group,mode?,timezone?,target?,unit?,render_layout?:mobile/desktop,render_theme?:主题ID}；省略render_layout/render_theme时使用插件配置default_render_layout/default_render_theme并存入计划，后续不随插件配置改变。主题ID从query返回的themes中选择，当前内置forest（清新绿）。私聊默认person/private，群聊默认group/protected。群内个人计划须显式mode=shared，其图片会对全群可见。update: {plan_id,revision,name?,goal?,mode?,timezone?,render_layout?:mobile/desktop,render_theme?:主题ID}，布局和主题可独立修改，之后该计划按保存的设置发送。delete/undo: {plan_id,revision}。public群员具有全部写权限，包括删除。undo仅撤销当前最近一次非创建、非撤销操作；版本冲突须重查，不盲目重试。
+            params(object): create: {name,goal?,preset?:generic/checkin/goal/todo,scope?:person/group,mode?,timezone?,target?,unit?,render_layout?:mobile/desktop,render_theme?:主题ID}；省略render_layout/render_theme时使用插件配置default_render_layout/default_render_theme并存入计划，后续不随插件配置改变。主题ID从query返回的themes中选择，当前内置forest（清新绿）、midnight（深色）。私聊默认person/private，群聊默认group/protected。群内个人计划须显式mode=shared，其图片会对全群可见。update: {plan_id,revision,name?,goal?,mode?,timezone?,render_layout?:mobile/desktop,render_theme?:主题ID}，布局和主题可独立修改，之后该计划按保存的设置发送。delete/undo: {plan_id,revision}。public群员具有全部写权限，包括删除。undo仅撤销当前最近一次非创建、非撤销操作；版本冲突须重查，不盲目重试。
         """
         if operation not in MANAGE_ACTIONS:
             return encode(

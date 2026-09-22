@@ -95,7 +95,9 @@ async def main():
                     {
                         "values": {
                             "date": (current - timedelta(days=i)).isoformat(),
-                            "amount": (i % 3 + 1) * 10,
+                            "amount": (0 if i % 3 == 2 else 1)
+                            if preset == "checkin"
+                            else (i % 3 + 1) * 10,
                             "note": ["专注阅读", "完成课程练习", "复盘错题"][i % 3],
                         }
                     }

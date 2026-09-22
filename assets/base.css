@@ -39,7 +39,7 @@ p { margin: 6px 0; overflow-wrap: anywhere; }
 .check-hero { background: var(--hero-background); padding: 22px; border-radius: var(--radius-hero); display: var(--hero-display); justify-content: space-between; align-items: center; margin: var(--hero-margin); box-shadow: var(--surface-shadow); }
 .hero-value { font-size: var(--font-hero); color: var(--hero-text); }
 .check-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--check-gap); }
-.check-cell { padding: var(--check-padding); background: var(--check-empty-background); border-radius: var(--radius-check-cell); text-align: center; font-size: var(--font-check); }
+.check-cell { min-width: 0; overflow-wrap: anywhere; padding: var(--check-padding); background: var(--check-empty-background); border-radius: var(--radius-check-cell); text-align: center; font-size: var(--font-check); }
 .check-cell.done { background: var(--check-done-background); color: var(--check-done-text); }
 .check-cell.partial { background: var(--check-partial-background); color: var(--check-partial-text); }
 .check-cell.today { outline: 2px solid var(--check-today-border); outline-offset: -2px; }

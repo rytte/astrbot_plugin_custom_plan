@@ -24,4 +24,5 @@ LAYOUTS = {
 DEFAULT_THEME = "forest"
 THEMES = {
     "forest": Theme("清新绿", "themes/forest.css"),
+    "midnight": Theme("深色", "themes/midnight.css"),
 }

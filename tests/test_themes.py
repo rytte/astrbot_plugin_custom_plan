@@ -45,8 +45,9 @@ def test_registered_styles_have_complete_variables_and_no_embedded_palette():
             assert references <= definitions, references - definitions
 
 
+@pytest.mark.parametrize("selected_theme", ["midnight", "test_ink"])
 async def test_theme_is_persisted_and_independent_of_layout_and_global_default(
-    storage, extra_theme
+    storage, extra_theme, selected_theme
 ):
     created = await storage.mutate(
         OWNER, "create", {"name": "现有计划", "preset": "todo"}, message_key="c"
@@ -54,34 +55,37 @@ async def test_theme_is_persisted_and_independent_of_layout_and_global_default(
     pid = created["plan_id"]
     initial = await storage.snapshot(pid, OWNER)
     reopened = Storage(
-        storage.path, default_render_layout="desktop", default_render_theme=extra_theme
+        storage.path,
+        default_render_layout="desktop",
+        default_render_theme=selected_theme,
     )
     await reopened.initialize()
     assert await reopened.snapshot(pid, OWNER) == initial
     new = await reopened.mutate(OWNER, "create", {"name": "新默认"}, message_key="n")
-    assert new["render_theme"] == extra_theme and new["render_layout"] == "desktop"
+    assert new["render_theme"] == selected_theme and new["render_layout"] == "desktop"
     explicit = await reopened.mutate(
         OWNER, "create", {"name": "指定主题", "render_theme": "forest"}, message_key="e"
     )
     assert explicit["render_theme"] == "forest"
     await reopened.mutate(
-        OWNER, "update", {"render_theme": extra_theme}, pid, 1, "theme"
+        OWNER, "update", {"render_theme": selected_theme}, pid, 1, "theme"
     )
     updated = await reopened.snapshot(pid, OWNER)
     assert (
-        updated["render_theme"] == extra_theme and updated["render_layout"] == "mobile"
+        updated["render_theme"] == selected_theme
+        and updated["render_layout"] == "mobile"
     )
     for key in ("records", "fields", "rules", "view", "blocks"):
         assert updated[key] == initial[key]
     await reopened.mutate(OWNER, "undo", {}, pid, 2, "undo")
     assert (await reopened.snapshot(pid, OWNER))["render_theme"] == "forest"
     await reopened.mutate(
-        OWNER, "update", {"render_theme": extra_theme}, pid, 3, "theme-again"
+        OWNER, "update", {"render_theme": selected_theme}, pid, 3, "theme-again"
     )
     await reopened.mutate(
         OWNER, "update", {"render_layout": "desktop"}, pid, 4, "layout"
     )
-    assert (await reopened.snapshot(pid, OWNER))["render_theme"] == extra_theme
+    assert (await reopened.snapshot(pid, OWNER))["render_theme"] == selected_theme
     with pytest.raises(PlanError, match="版本冲突"):
         await reopened.mutate(
             OWNER, "update", {"render_theme": "forest"}, pid, 4, "stale"
@@ -96,13 +100,17 @@ async def test_theme_is_persisted_and_independent_of_layout_and_global_default(
             "forbidden",
         )
     await storage.initialize()
-    assert (await storage.query(OWNER, {"plan_id": pid}))["render_theme"] == extra_theme
+    assert (await storage.query(OWNER, {"plan_id": pid}))[
+        "render_theme"
+    ] == selected_theme
     listing = await reopened.query(OWNER, {})
-    assert listing["default_render_theme"] == extra_theme
-    assert {"id": extra_theme, "name": "测试墨色"} in listing["themes"]
+    assert listing["default_render_theme"] == selected_theme
+    assert {"id": selected_theme, "name": THEMES[selected_theme].name} in listing[
+        "themes"
+    ]
     assert (
         next(p for p in listing["plans"] if p["plan_id"] == pid)["render_theme"]
-        == extra_theme
+        == selected_theme
     )
 
 
@@ -254,6 +262,7 @@ async def test_registered_theme_renders_all_views_and_layouts_without_leaking(
                 sizes = []
                 for theme, color in (
                     ("forest", (237, 243, 239)),
+                    ("midnight", (11, 18, 32)),
                     (extra_theme, (16, 24, 40)),
                     ("forest", (237, 243, 239)),
                 ):

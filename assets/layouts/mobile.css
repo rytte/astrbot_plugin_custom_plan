@@ -68,7 +68,6 @@
 .check-current { font-size: 42px; line-height: 1.35; overflow-wrap: anywhere; margin: 10px 0; }
 .check-streak { padding-top: 14px; margin-top: 16px; }
 .check-caption { font-size: 22px; margin-bottom: 12px; }
-.check-cell { min-width: 0; overflow-wrap: anywhere; }
 .check-amount { display: block; }
 .calendar-day { min-width: 0; text-align: center; font-size: 26px; }
 .calendar-count { display: block; font-size: 18px; margin-top: 4px; }
