@@ -243,13 +243,14 @@ class CustomPlanPlugin(Star):
                 with suppress(OSError):
                     path.unlink(missing_ok=True)
 
-    @filter.command("计划", alias={"plan"})
+    @filter.command("plan")
+    @filter.regex(r"^plan\s*$")
     async def help_command(self, event: AstrMessageEvent):
         yield event.plain_result(
-            "自定义计划\n/计划列表\n/计划创建 名称 [generic/checkin/goal/todo]\n/计划看板 计划ID [页码]\n/计划操作 操作 JSON参数\n也可以自然对话创建、记录、查询和切换视图。默认使用通用表格。"
+            "自定义计划\n/plan — 查看帮助\n/plan list [页码]\n/plan create 名称 [generic/checkin/goal/todo]\n/plan show 计划ID [页码]\n/plan exec 操作 JSON参数\n也可以自然对话创建、记录、查询和切换视图。默认使用通用表格。"
         )
 
-    @filter.command("计划列表")
+    @filter.command("plan list")
     async def list_command(self, event: AstrMessageEvent, page: int = 1):
         result = json.loads(await self.execute(event, "query", {"page": page}))
         if not result["ok"]:
@@ -259,7 +260,7 @@ class CustomPlanPlugin(Star):
         lines = [f"{p['name']} · {p['plan_id']} · v{p['revision']}" for p in items]
         yield event.plain_result("\n".join(lines) or "当前会话没有可查看的计划。")
 
-    @filter.command("计划创建")
+    @filter.command("plan create")
     async def create_command(
         self, event: AstrMessageEvent, name: str, preset: str = "generic"
     ):
@@ -267,7 +268,7 @@ class CustomPlanPlugin(Star):
             await self.execute(event, "create", {"name": name, "preset": preset})
         )
 
-    @filter.command("计划看板")
+    @filter.command("plan show")
     async def render_command(
         self, event: AstrMessageEvent, plan_id: str, page: int = 1
     ):
@@ -277,7 +278,7 @@ class CustomPlanPlugin(Star):
         if not result["ok"]:
             yield event.plain_result(result["error"])
 
-    @filter.command("计划操作")
+    @filter.command("plan exec")
     async def operation_command(
         self, event: AstrMessageEvent, operation: str, payload: GreedyStr
     ):

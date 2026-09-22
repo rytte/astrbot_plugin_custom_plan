@@ -1,6 +1,6 @@
 # 自定义计划
 
-AstrBot 的自然语言计划插件。每个计划有一个主数据集，**默认使用通用表格**，也可切换为打卡面板、待办列表或日历；统计和随笔作为可选扩展区块。
+AstrBot 的自然语言计划插件。每个计划有一个主数据集，**默认使用通用表格**，也可切换为打卡面板、待办列表或日历；提供统计和随笔作为可选扩展区块。
 
 ## 安装
 
@@ -38,11 +38,11 @@ python -m playwright install --with-deps chromium
 
 | 命令 | 用途 |
 | --- | --- |
-| `/计划` | 查看帮助 |
-| `/计划列表 [页码]` | 列出当前会话可查看的计划 |
-| `/计划创建 名称 [预设]` | 创建计划，预设为 `generic/checkin/goal/todo`，默认 `generic` |
-| `/计划看板 计划ID [页码]` | 发送本地生成的图片 |
-| `/计划操作 操作 JSON参数` | 无需 LLM 的完整操作入口，适合调试和精确操作 |
+| `/plan` | 查看帮助 |
+| `/plan list [页码]` | 列出当前会话可查看的计划 |
+| `/plan create 名称 [预设]` | 创建计划，预设为 `generic/checkin/goal/todo`，默认 `generic` |
+| `/plan show 计划ID [页码]` | 发送本地生成的图片 |
+| `/plan exec 操作 JSON参数` | 无需 LLM 的完整操作入口，适合调试和精确操作 |
 
 图片是静态展示，修改通过对话或命令执行。截图失败会发送文字摘要，数据仍可查询和修改。
 
@@ -87,28 +87,28 @@ python -m playwright install --with-deps chromium
 先创建并查询：
 
 ```text
-/计划创建 旅行准备 todo
-/计划操作 query {"plan_id":"p_实际ID"}
+/plan create 旅行准备 todo
+/plan exec query {"plan_id":"p_实际ID"}
 ```
 
 新增任务，以下版本号需要替换成实际查询结果：
 
 ```text
-/计划操作 add_records {"plan_id":"p_实际ID","revision":1,"records":[{"values":{"title":"订酒店","due":"2026-10-01"}}]}
-/计划操作 view {"plan_id":"p_实际ID","revision":2,"type":"todo"}
+/plan exec add_records {"plan_id":"p_实际ID","revision":1,"records":[{"values":{"title":"订酒店","due":"2026-10-01"}}]}
+/plan exec view {"plan_id":"p_实际ID","revision":2,"type":"todo"}
 ```
 
 切换日历与隐藏主视图：
 
 ```text
-/计划操作 view {"plan_id":"p_实际ID","revision":3,"type":"calendar","date_field":"due"}
-/计划操作 view {"plan_id":"p_实际ID","revision":4,"visible":false}
+/plan exec view {"plan_id":"p_实际ID","revision":3,"type":"calendar","date_field":"due"}
+/plan exec view {"plan_id":"p_实际ID","revision":4,"visible":false}
 ```
 
 添加独立随笔：
 
 ```text
-/计划操作 block_add {"plan_id":"p_实际ID","revision":5,"type":"notes","title":"出发前提醒","config":{"text":"带好证件，提前确认入住时间。"}}
+/plan exec block_add {"plan_id":"p_实际ID","revision":5,"type":"notes","title":"出发前提醒","config":{"text":"带好证件，提前确认入住时间。"}}
 ```
 
 ## 权限与恢复

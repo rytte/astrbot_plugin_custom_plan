@@ -37,6 +37,9 @@ class Event:
     def set_extra(self, name, value):
         self.extras[name] = value
 
+    def get_message_str(self):
+        return self.message_str
+
     def plain_result(self, value):
         return ("text", value)
 
@@ -56,6 +59,63 @@ async def plugin(storage, tmp_path):
     await plugin.initialize()
     yield plugin
     await plugin.terminate()
+
+
+@pytest.mark.parametrize(
+    ("message", "handler_name", "params"),
+    [
+        ("plan", "help_command", {}),
+        ("plan list", "list_command", {"page": 1}),
+        ("plan list 2", "list_command", {"page": 2}),
+        (
+            "plan create 阅读",
+            "create_command",
+            {"name": "阅读", "preset": "generic"},
+        ),
+        (
+            "plan create 阅读打卡 checkin",
+            "create_command",
+            {"name": "阅读打卡", "preset": "checkin"},
+        ),
+        ("plan show p_demo", "render_command", {"plan_id": "p_demo", "page": 1}),
+        (
+            "plan show p_demo 2",
+            "render_command",
+            {"plan_id": "p_demo", "page": 2},
+        ),
+        (
+            'plan exec create {"name": "旅行准备", "preset": "todo"}',
+            "operation_command",
+            {
+                "operation": "create",
+                "payload": '{"name": "旅行准备", "preset": "todo"}',
+            },
+        ),
+        ("计划", None, None),
+        ("计划列表", None, None),
+        ("计划创建 阅读 checkin", None, None),
+        ("计划看板 p_demo", None, None),
+        ("计划操作 query {}", None, None),
+    ],
+)
+def test_english_commands_match_once_and_parse_arguments(message, handler_name, params):
+    from astrbot.core.star.star_handler import EventType, star_handlers_registry
+
+    event = Event()
+    # AstrBot removes the configured wake prefix before matching commands.
+    event.message_str = message
+    event.is_at_or_wake_command = True
+    matched = []
+    for handler in star_handlers_registry.get_handlers_by_module_name(
+        CustomPlanPlugin.__module__
+    ):
+        if handler.event_type != EventType.AdapterMessageEvent:
+            continue
+        event.extras.pop("parsed_params", None)
+        if all(f.filter(event, {}) for f in handler.event_filters):
+            matched.append((handler.handler_name, event.get_extra("parsed_params")))
+
+    assert matched == ([(handler_name, params)] if handler_name else [])
 
 
 async def test_real_astrbot_registration_and_shared_tools(plugin):
