@@ -126,7 +126,14 @@ async def test_real_astrbot_registration_and_shared_tools(plugin):
     metadata = _PluginUpdater.inspect_plugin_directory(Path(__file__).parents[1])
     assert metadata["metadata"]["name"] == "astrbot_plugin_custom_plan"
 
-    for name in ("query", "manage", "records", "configure", "render"):
+    for name in (
+        "query",
+        "manage",
+        "records",
+        "configure",
+        "render",
+        "supervision_rules",
+    ):
         assert llm_tools.get_func("custom_plan_" + name) is not None
     event = Event()
     created = json.loads(
@@ -278,3 +285,96 @@ async def test_unknown_arguments_cannot_spoof_identity(plugin):
     assert (
         json.loads(await plugin.custom_plan_query(Event(), {}))["result"]["total"] == 0
     )
+
+
+async def test_supervision_tools_and_commands_share_enforcement(plugin):
+    created = json.loads(
+        await plugin.custom_plan_manage(
+            Event(message="create"), "create", {"name": "阅读", "preset": "checkin"}
+        )
+    )["result"]
+    pid = created["plan_id"]
+    preview = json.loads(
+        await plugin.custom_plan_manage(
+            Event(message="preview"),
+            "supervision_preview",
+            {
+                "plan_id": pid,
+                "revision": 1,
+                "end_date": None,
+                "execution_standard": "每天完成计划要求的任务，并按实际进度如实记录。",
+            },
+        )
+    )["result"]
+    params = {
+        "plan_id": pid,
+        "revision": 1,
+        "confirmation_token": preview["confirmation_token"],
+    }
+    same_message = json.loads(
+        await plugin.custom_plan_manage(
+            Event(message="preview"), "supervision_enable", params
+        )
+    )
+    assert not same_message["ok"]
+    enabled = json.loads(
+        await plugin.custom_plan_manage(
+            Event(message="confirm"), "supervision_enable", params
+        )
+    )
+    assert enabled["ok"] and enabled["result"]["supervision"]["active"]
+    queried = json.loads(await plugin.custom_plan_query(Event(), {"plan_id": pid}))
+    assert "rules_text" not in json.dumps(queried)
+    rules = json.loads(await plugin.custom_plan_supervision_rules(Event(), pid))
+    assert rules["result"]["rules_text"] == preview["rules_text"]
+    added = json.loads(
+        await plugin.custom_plan_records(
+            Event(message="add"),
+            "add",
+            {"plan_id": pid, "revision": 2, "records": [{"values": {"amount": 20}}]},
+        )
+    )["result"]
+    corrected = json.loads(
+        await plugin.custom_plan_records(
+            Event(message="correct"),
+            "correct",
+            {
+                "plan_id": pid,
+                "revision": 3,
+                "reason": "多写一个零",
+                "records": [
+                    {"record_id": added["changed_ids"][0], "values": {"amount": 2}}
+                ],
+            },
+        )
+    )
+    assert corrected["ok"]
+    history = json.loads(
+        await plugin.custom_plan_query(
+            Event(), {"plan_id": pid, "supervision_history": True}
+        )
+    )
+    assert history["result"]["entries"][0]["document"]["reason"] == "多写一个零"
+    result = [
+        message
+        async for message in plugin.operation_command(
+            Event(message="command-delete"),
+            "delete",
+            json.dumps({"plan_id": pid, "revision": 4}),
+        )
+    ]
+    assert "监督期间禁止删除" in result[0][1]
+    configuration = json.loads(
+        await plugin.custom_plan_configure(
+            Event(message="change-rules"),
+            "rules",
+            {
+                "plan_id": pid,
+                "revision": 4,
+                "threshold": 0.5,
+                "effective_from": queried["result"]["today"],
+            },
+        )
+    )
+    assert not configuration["ok"]
+    assert (await plugin.storage.snapshot(pid, Actor("qq-1", "owner")))["revision"] == 4

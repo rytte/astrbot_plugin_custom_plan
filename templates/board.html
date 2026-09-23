@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:"><style>{{ font_css | safe }}{{ styles | safe }}</style></head>
 <body class="{{ layout }}" data-theme="{{ theme }}"><main class="board">
-<header class="header"><div class="eyebrow">CUSTOM PLAN</div><h1>{{ plan.name }}</h1>{% if plan.goal %}<p class="goal">{{ plan.goal }}</p>{% endif %}<div class="meta"><span>{{ '个人' if plan.scope == 'person' else '群组' }} · {{ {'private':'私有','shared':'本人可跨群使用','protected':'创建者修改 / 群员查看','public':'群员共同读写'}[plan.mode] }}</span><span>{{ plan.timezone }}</span></div></header>
+<header class="header"><div class="eyebrow">CUSTOM PLAN</div><h1>{% if supervised %}<svg class="supervision-mark" viewBox="0 0 24 24" aria-label="监督计划" role="img"><path d="M12 2 21 6v6c0 5-6 9-9 10C9 21 3 17 3 12V6Z"/><path class="shield-check" d="m8 12 3 3 5-6"/></svg>{% endif %}{{ plan.name }}</h1>{% if plan.goal %}<p class="goal">{{ plan.goal }}</p>{% endif %}<div class="meta"><span>{{ '个人' if plan.scope == 'person' else '群组' }} · {{ {'private':'私有','shared':'本人可跨群使用','protected':'创建者修改 / 群员查看','public':'群员共同读写'}[plan.mode] }}</span><span>{{ plan.timezone }}</span></div></header>
 {% if view.visible %}<section class="panel">{% include view.template %}</section>{% endif %}
 {% for block in blocks %}<section class="panel">{% include block.template %}</section>{% endfor %}
 {% if not view.visible and not blocks %}<section class="panel empty">当前没有可见内容，可通过对话开启主视图或添加区块。</section>{% endif %}

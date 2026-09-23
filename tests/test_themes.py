@@ -167,7 +167,7 @@ async def test_v2_theme_migration_preserves_desktop_deleted_plans_and_undo(
     await upgraded.initialize()
     assert await upgraded.snapshot(pid, OWNER, include_deleted=True) == before
     with sqlite3.connect(storage.path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert all(
             json.loads(row[0])["render_theme"] == "forest"
             for row in connection.execute(

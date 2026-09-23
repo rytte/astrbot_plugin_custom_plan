@@ -31,6 +31,11 @@ async def main():
     parser.add_argument("--layout", choices=LAYOUTS, default="mobile")
     parser.add_argument("--theme", choices=THEMES, default=DEFAULT_THEME)
     parser.add_argument(
+        "--supervised",
+        action="store_true",
+        help="Show the supervision shield in example images",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path(__file__).resolve().parents[1] / "dist" / "previews",
@@ -42,6 +47,8 @@ async def main():
         "render_timeout": 90,
     }
     output = args.output / args.theme / args.layout
+    if args.supervised:
+        output = output / "supervised"
     renderer = LocalRenderer(output, config)
     await renderer.initialize()
     actor = Actor("preview", "demo")
@@ -118,6 +125,7 @@ async def main():
                 actor,
             )
             started = time.perf_counter()
+            plan["supervision"] = {"active": args.supervised}
             image = await renderer.render(plan, {}, actor.user)
             destination = output / (kind + ".png")
             image.replace(destination)

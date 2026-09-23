@@ -10,7 +10,9 @@ from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 
+from . import supervision
 from .appearance import DEFAULT_THEME, THEMES
 from .domain import (
     Actor,
@@ -22,6 +24,7 @@ from .domain import (
     now_iso,
     object_keys,
     select_records,
+    text,
     today,
     validate_plan,
     validate_render_layout,
@@ -89,9 +92,9 @@ class Storage:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3):
-                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 3。")
-            if version == 3:
+            if version not in (0, 1, 2, 3, 4):
+                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 4。")
+            if version == 4:
                 self._purge_expired_deleted(connection)
                 return
             if version == 0:
@@ -123,10 +126,220 @@ class Storage:
                     )""",
                 ):
                     connection.execute(statement)
-            else:
+            elif version in (1, 2):
                 self._migrate_appearance(connection, version)
-            connection.execute("PRAGMA user_version=3")
+            for statement in (
+                """CREATE TABLE IF NOT EXISTS supervision (
+                plan_id TEXT PRIMARY KEY REFERENCES plans(plan_id) ON DELETE CASCADE,
+                document TEXT NOT NULL)""",
+                """CREATE TABLE IF NOT EXISTS supervision_previews (
+                plan_id TEXT PRIMARY KEY REFERENCES plans(plan_id) ON DELETE CASCADE,
+                document TEXT NOT NULL)""",
+                """CREATE TABLE IF NOT EXISTS supervision_log (
+                id INTEGER PRIMARY KEY,
+                plan_id TEXT NOT NULL REFERENCES plans(plan_id) ON DELETE CASCADE,
+                revision INTEGER NOT NULL,
+                actor TEXT NOT NULL,
+                action TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                document TEXT NOT NULL)""",
+                "CREATE INDEX IF NOT EXISTS supervision_log_plan ON supervision_log(plan_id, id)",
+            ):
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version=4")
             self._purge_expired_deleted(connection)
+
+    @staticmethod
+    def _supervision(connection, plan_id: str) -> dict | None:
+        row = connection.execute(
+            "SELECT document FROM supervision WHERE plan_id=?", (plan_id,)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    @staticmethod
+    def _save_supervision(connection, plan_id: str, state: dict) -> None:
+        connection.execute(
+            "INSERT INTO supervision VALUES(?,?) ON CONFLICT(plan_id) DO UPDATE SET document=excluded.document",
+            (plan_id, encode(state)),
+        )
+
+    async def supervision_preview(
+        self, actor: Actor, plan_id: str, revision: int, params: dict, message_key: str
+    ) -> dict:
+        return await asyncio.to_thread(
+            self._supervision_preview, actor, plan_id, revision, params, message_key
+        )
+
+    def _supervision_preview(self, actor, plan_id, revision, params, message_key):
+        if not message_key:
+            raise PlanError("缺少可信的消息标识。")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            plan = self._load(connection, plan_id, actor, write=True)
+            supervision.require_owner(plan, actor)
+            if type(revision) is not int or revision != plan["revision"]:
+                raise PlanError("版本冲突，请重新查询后预览监督规则。")
+            now = supervision.utc_now()
+            if supervision.summary(self._supervision(connection, plan_id), now)[
+                "active"
+            ]:
+                raise PlanError("计划已在监督中，不能重新开启或替换规则。")
+            preview = supervision.proposal(plan, params, now)
+            preview.update(
+                token=uuid4().hex,
+                revision=revision,
+                actor=actor.user,
+                message_key=message_key,
+            )
+            connection.execute(
+                "INSERT INTO supervision_previews VALUES(?,?) ON CONFLICT(plan_id) DO UPDATE SET document=excluded.document",
+                (plan_id, encode(preview)),
+            )
+            return {
+                "plan_id": plan_id,
+                "revision": revision,
+                "confirmation_token": preview["token"],
+                "rules_text": preview["rules_text"],
+                "constraints": preview["constraints"],
+                "ends_at": preview["ends_at"],
+            }
+
+    async def supervision_rules(self, actor: Actor, plan_id: str) -> dict:
+        return await asyncio.to_thread(self._supervision_rules, actor, plan_id)
+
+    def _supervision_rules(self, actor, plan_id):
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            self._load(connection, plan_id, actor)
+            state = self._supervision(connection, plan_id)
+            if state is None:
+                raise PlanError("此计划尚未开启过监督。")
+            return {
+                "plan_id": plan_id,
+                "supervision": supervision.summary(state, supervision.utc_now()),
+                "rules_text": state["rules_text"],
+                "constraints": state["constraints"],
+            }
+
+    def _supervision_history(self, actor, plan_id, page):
+        if type(page) is not int or page < 1:
+            raise PlanError("监督日志 page 必须是正整数。")
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            self._load(connection, plan_id, actor)
+            rows = connection.execute(
+                "SELECT revision,actor,action,created_at,document FROM supervision_log WHERE plan_id=? ORDER BY id DESC LIMIT 1 OFFSET ?",
+                (plan_id, page - 1),
+            ).fetchall()
+            entries = []
+            for row in rows:
+                detail = json.loads(row["document"])
+                if "state" in detail:
+                    detail = {
+                        "supervision": supervision.summary(
+                            detail["state"], datetime.fromisoformat(row["created_at"])
+                        )
+                    }
+                entries.append({**dict(row), "document": detail})
+            return {
+                "plan_id": plan_id,
+                "page": page,
+                "page_size": 1,
+                "total": connection.execute(
+                    "SELECT COUNT(*) FROM supervision_log WHERE plan_id=?", (plan_id,)
+                ).fetchone()[0],
+                "entries": entries,
+            }
+
+    def _supervision_transition(
+        self, connection, plan, actor, action, params, message_key, now
+    ):
+        supervision.require_owner(plan, actor)
+        state = self._supervision(connection, plan["plan_id"])
+        status = supervision.summary(state, now)
+        if action == "supervision_enable":
+            object_keys(params, {"confirmation_token"}, "确认监督")
+            if status["active"]:
+                raise PlanError("计划已在监督中。")
+            row = connection.execute(
+                "SELECT document FROM supervision_previews WHERE plan_id=?",
+                (plan["plan_id"],),
+            ).fetchone()
+            if row is None:
+                raise PlanError("请先生成监督规则预览并交给用户确认。")
+            preview = json.loads(row[0])
+            if (
+                preview["token"] != params.get("confirmation_token")
+                or preview["revision"] != plan["revision"]
+                or preview["actor"] != actor.user
+            ):
+                raise PlanError("监督预览已失效，请重新预览并确认。")
+            if preview["message_key"] == message_key:
+                raise PlanError("请展示监督规则后，等待用户下一条消息明确确认。")
+            if preview["ends_at"] is not None and now >= datetime.fromisoformat(
+                preview["ends_at"]
+            ):
+                raise PlanError("监督预览的期限已过，请重新预览。")
+            state = {
+                key: preview[key] for key in ("rules_text", "constraints", "ends_at")
+            }
+            state.update(
+                status="active",
+                started_at=supervision.stamp(now),
+                exit_requested_at=None,
+                exit_ready_at=None,
+                exit_message_key=None,
+                completion_anchors={
+                    r["record_id"]: r["completed_at"]
+                    for r in plan["records"]
+                    if r["completed_at"]
+                },
+            )
+            connection.execute(
+                "DELETE FROM supervision_previews WHERE plan_id=?", (plan["plan_id"],)
+            )
+        else:
+            object_keys(params, set(), "监督退出")
+            if not status["active"]:
+                raise PlanError("计划当前不在监督中。")
+            if action == "supervision_request_exit":
+                if state["status"] == "active":
+                    state.update(
+                        status="exit_pending",
+                        exit_requested_at=supervision.stamp(now),
+                        exit_ready_at=supervision.stamp(
+                            now
+                            + timedelta(
+                                hours=state["constraints"]["exit_cooldown_hours"]
+                            )
+                        ),
+                        exit_message_key=message_key,
+                    )
+            elif action == "supervision_cancel_exit":
+                if state["status"] != "exit_pending":
+                    raise PlanError("没有待取消的退出申请。")
+                state.update(
+                    status="active",
+                    exit_requested_at=None,
+                    exit_ready_at=None,
+                    exit_message_key=None,
+                )
+            elif action == "supervision_confirm_exit":
+                if not status["can_confirm_exit"]:
+                    raise PlanError(
+                        "请先申请退出，满24小时后再明确确认；冷静期内监督继续。"
+                    )
+                if state["exit_message_key"] == message_key:
+                    raise PlanError("退出须等待用户的新消息明确确认。")
+                state.update(
+                    status="released",
+                    released_at=supervision.stamp(now),
+                    exit_requested_at=None,
+                    exit_ready_at=None,
+                    exit_message_key=None,
+                )
+        self._save_supervision(connection, plan["plan_id"], state)
+        return state
 
     def _purge_expired_deleted(self, connection) -> None:
         """Permanently remove soft-deleted plans after the configured retention period."""
@@ -214,13 +427,31 @@ class Storage:
 
     def _snapshot(self, plan_id, actor, include_deleted):
         with self._connect() as connection:
-            connection.execute("BEGIN")
-            return self._load(connection, plan_id, actor, deleted=include_deleted)
+            connection.execute("BEGIN IMMEDIATE")
+            self._purge_expired_deleted(connection)
+            plan = self._load(connection, plan_id, actor, deleted=include_deleted)
+            plan["supervision"] = supervision.summary(
+                self._supervision(connection, plan_id), supervision.utc_now()
+            )
+            return plan
 
     async def query(self, actor: Actor, params: dict) -> dict:
         return await asyncio.to_thread(self._query, actor, params)
 
     def _query(self, actor: Actor, params: dict) -> dict:
+        if "supervision_history" in params:
+            object_keys(
+                params, {"plan_id", "page", "supervision_history"}, "监督日志查询"
+            )
+            if params["supervision_history"] is not True:
+                raise PlanError(
+                    "查询监督日志时 supervision_history 必须为 true；普通查询请省略此字段。"
+                )
+            return self._supervision_history(
+                actor,
+                text(params.get("plan_id"), "plan_id", 80, False),
+                params.get("page", 1),
+            )
         object_keys(
             params,
             {"plan_id", "page", "page_size", "filters", "include_deleted"},
@@ -254,18 +485,24 @@ class Storage:
                     ):
                         plans.append(
                             {
-                                k: plan[k]
-                                for k in (
-                                    "plan_id",
-                                    "name",
-                                    "scope",
-                                    "mode",
-                                    "preset",
-                                    "render_layout",
-                                    "render_theme",
-                                    "revision",
-                                    "deleted",
-                                )
+                                "supervision": supervision.summary(
+                                    self._supervision(connection, plan["plan_id"]),
+                                    supervision.utc_now(),
+                                ),
+                                **{
+                                    k: plan[k]
+                                    for k in (
+                                        "plan_id",
+                                        "name",
+                                        "scope",
+                                        "mode",
+                                        "preset",
+                                        "render_layout",
+                                        "render_theme",
+                                        "revision",
+                                        "deleted",
+                                    )
+                                },
                             }
                         )
                 return {
@@ -298,6 +535,10 @@ class Storage:
             result.pop("group")
             result["records"] = records[(page - 1) * size : page * size]
             result.update(
+                supervision=supervision.summary(
+                    self._supervision(connection, plan["plan_id"]),
+                    supervision.utc_now(),
+                ),
                 total=len(records),
                 page=page,
                 page_size=size,
@@ -371,9 +612,15 @@ class Storage:
                     "replayed": True,
                     "current_revision": current["revision"],
                     "deleted": current["deleted"],
+                    "supervision": supervision.summary(
+                        self._supervision(connection, replay["plan_id"]),
+                        supervision.utc_now(),
+                    ),
                 }
             previous = None
             changed = []
+            audit = None
+            now = supervision.utc_now()
             if action == "create":
                 count = connection.execute(
                     "SELECT COUNT(*) FROM plans WHERE platform=? AND owner=?",
@@ -399,7 +646,21 @@ class Storage:
                         f"版本冲突：当前版本为 {plan['revision']}，请重新查询后再操作。"
                     )
                 previous = encode(plan)
-                if action == "undo":
+                state = self._supervision(connection, plan_id)
+                active = supervision.summary(state, now)["active"]
+                before = deepcopy(plan)
+                if action in supervision.LIFECYCLE_ACTIONS:
+                    state = self._supervision_transition(
+                        connection, plan, actor, action, params, message_key, now
+                    )
+                    audit = (
+                        {"state": deepcopy(state)}
+                        if action == "supervision_enable"
+                        else {"supervision": supervision.summary(state, now)}
+                    )
+                elif action == "undo":
+                    if active:
+                        raise PlanError("监督期间禁止普通撤销，请使用留痕纠错。")
                     object_keys(params, set(), "撤销参数")
                     entry = connection.execute(
                         "SELECT action,previous FROM changes WHERE plan_id=? AND revision=?",
@@ -408,15 +669,57 @@ class Storage:
                     if (
                         entry is None
                         or entry["previous"] is None
-                        or entry["action"] == "undo"
+                        or entry["action"]
+                        in {"undo", "correct_records"} | supervision.LIFECYCLE_ACTIONS
                     ):
                         raise PlanError(
-                            "没有可撤销的最近变更；首版不支持连续撤销或撤销创建。"
+                            "没有可撤销的最近变更；不支持连续撤销、撤销创建或监督操作。"
                         )
                     plan = json.loads(entry["previous"])
                     authorize(plan, actor, True)
                 else:
-                    changed = apply_change(plan, action, params, actor)
+                    reason = None
+                    operation = action
+                    payload = params
+                    if action == "correct_records":
+                        if not active:
+                            raise PlanError(
+                                "correct 仅用于监督期间纠错，普通计划请使用 update。"
+                            )
+                        object_keys(params, {"records", "reason"}, "监督纠错")
+                        reason = text(params.get("reason"), "纠错原因", 500, False)
+                        payload = {"records": params.get("records")}
+                        operation = "update_records"
+                    if active and action in {"delete", "delete_records"}:
+                        raise PlanError(
+                            "监督期间禁止删除计划或记录；请先按冷静期流程退出监督。"
+                        )
+                    changed = apply_change(plan, operation, payload, actor)
+                    if active:
+                        corrections = supervision.enforce(
+                            before, plan, action, state, now, reason
+                        )
+                        if action == "correct_records":
+                            if not corrections:
+                                raise PlanError(
+                                    "没有需要纠错的关键数据；辅助内容请使用普通 update。"
+                                )
+                            # Save every corrected record, including accompanying notes.
+                            old_records = {r["record_id"]: r for r in before["records"]}
+                            new_records = {r["record_id"]: r for r in plan["records"]}
+                            audit = {
+                                "reason": reason,
+                                "corrections": [
+                                    {
+                                        "record_id": rid,
+                                        "before": old_records[rid],
+                                        "after": new_records[rid],
+                                        "reason": reason,
+                                    }
+                                    for rid in dict.fromkeys(corrections)
+                                ],
+                            }
+                        self._save_supervision(connection, plan_id, state)
                 plan["revision"] = revision + 1
                 plan["updated_at"] = now_iso()
             validate_plan(plan)
@@ -448,6 +751,29 @@ class Storage:
                 "DELETE FROM changes WHERE plan_id=? AND revision < ?",
                 (plan["plan_id"], plan["revision"] - 19),
             )
+            if audit is not None:
+                entries = (
+                    [
+                        {"reason": audit["reason"], "corrections": [item]}
+                        for item in audit["corrections"]
+                    ]
+                    if "corrections" in audit
+                    else [audit]
+                )
+                connection.executemany(
+                    "INSERT INTO supervision_log(plan_id,revision,actor,action,created_at,document) VALUES(?,?,?,?,?,?)",
+                    [
+                        (
+                            plan["plan_id"],
+                            plan["revision"],
+                            actor.user,
+                            action,
+                            supervision.stamp(now),
+                            encode(entry),
+                        )
+                        for entry in entries
+                    ],
+                )
             result = {
                 "plan_id": plan["plan_id"],
                 "revision": plan["revision"],
@@ -455,6 +781,9 @@ class Storage:
                 "render_layout": plan["render_layout"],
                 "render_theme": plan["render_theme"],
                 "deleted": plan["deleted"],
+                "supervision": supervision.summary(
+                    self._supervision(connection, plan["plan_id"]), now
+                ),
             }
             connection.execute(
                 "INSERT INTO requests VALUES(?,?,?,?)",

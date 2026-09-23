@@ -13,6 +13,8 @@ html, body {
 .header { padding: 4px 4px 24px; }
 .eyebrow { font-size: var(--font-eyebrow); letter-spacing: var(--eyebrow-spacing); color: var(--text-eyebrow); }
 h1 { font-size: var(--font-title); line-height: 1.35; margin: var(--title-margin); overflow-wrap: anywhere; }
+.supervision-mark { display: inline-block; width: .8em; height: .8em; margin-right: .3em; vertical-align: -.03em; color: var(--hero-text); fill: currentColor; }
+.shield-check { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 h2 { font-size: var(--font-heading); line-height: var(--heading-line-height); margin: 0 0 14px; }
 h3 { font-size: var(--font-subheading); margin: 0 0 8px; }
 p { margin: 6px 0; overflow-wrap: anywhere; }

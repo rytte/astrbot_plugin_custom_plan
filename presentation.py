@@ -329,4 +329,9 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
                 else None,
             )
         blocks.append(data)
-    return {"plan": plan, "view": view, "blocks": blocks}
+    return {
+        "plan": plan,
+        "view": view,
+        "blocks": blocks,
+        "supervised": plan.get("supervision", {}).get("active", False),
+    }
