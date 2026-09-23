@@ -4,7 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from astrbot_plugin_custom_plan.domain import Actor, PlanError
+from astrbot_plugin_custom_plan.domain import Actor, PlanError, create_plan
+from astrbot_plugin_custom_plan.presentation import build_view
 
 pytest.importorskip("astrbot")
 CustomPlanPlugin = pytest.importorskip(
@@ -13,9 +14,10 @@ CustomPlanPlugin = pytest.importorskip(
 
 
 class Event:
-    def __init__(self, user="owner", group="", message="1"):
+    def __init__(self, user="owner", group="", message="1", nickname=""):
         self.user = user
         self.group = group
+        self.nickname = nickname
         self.message_obj = SimpleNamespace(message_id=message)
         self.extras = {}
         self.sent = []
@@ -25,6 +27,12 @@ class Event:
 
     def get_sender_id(self):
         return self.user
+
+    def get_sender_name(self):
+        return self.nickname
+
+    async def get_group(self, group_id=None):
+        return None
 
     def get_group_id(self):
         return self.group
@@ -378,3 +386,142 @@ async def test_supervision_tools_and_commands_share_enforcement(plugin):
     )
     assert not configuration["ok"]
     assert (await plugin.storage.snapshot(pid, Actor("qq-1", "owner")))["revision"] == 4
+    switched = json.loads(
+        await plugin.custom_plan_configure(
+            Event(message="switch-view"),
+            "view",
+            {"plan_id": pid, "revision": 4, "type": "todo"},
+        )
+    )
+    assert switched["ok"] and switched["result"]["supervision"]["active"]
+    snapshot = await plugin.storage.snapshot(pid, Actor("qq-1", "owner"))
+    assert snapshot["view"]["type"] == "todo" and snapshot["rules"]["kind"] == "checkin"
+    assert len(snapshot["fields"]) == 3 and snapshot["revision"] == 5
+
+
+@pytest.mark.parametrize("view_type", ["checkin", "todo"])
+@pytest.mark.parametrize(
+    "mode,viewer,expected,lookup_count",
+    [
+        ("public", "member", "成员昵称", 0),
+        ("protected", "member", "创建者昵称", 1),
+        ("protected", "owner", "创建者昵称", 0),
+    ],
+)
+async def test_group_render_uses_platform_nickname_for_displayed_user(
+    plugin, tmp_path, monkeypatch, view_type, mode, viewer, expected, lookup_count
+):
+    owner = Event(group="g1", nickname="创建者昵称")
+    pid = json.loads(
+        await plugin.custom_plan_manage(
+            owner, "create", {"name": "学习", "preset": "checkin", "mode": mode}
+        )
+    )["result"]["plan_id"]
+    await plugin.custom_plan_configure(
+        owner, "view", {"plan_id": pid, "revision": 1, "type": view_type}
+    )
+    event = Event(
+        user=viewer,
+        group="g1",
+        nickname="创建者昵称" if viewer == "owner" else "成员昵称",
+    )
+    lookups = []
+
+    async def get_group(group_id):
+        lookups.append(group_id)
+        return SimpleNamespace(
+            group_id="g1",
+            members=[
+                SimpleNamespace(user_id="owner", nickname="创建者昵称"),
+                SimpleNamespace(user_id="member", nickname="成员昵称"),
+            ],
+        )
+
+    captured = []
+
+    async def render(plan, options, actor_user, user_names):
+        captured.append(user_names)
+        assert (
+            build_view(plan, options, actor_user, user_names)["view"]["scope_label"]
+            == expected
+        )
+        path = tmp_path / "nickname.png"
+        path.write_bytes(b"test")
+        return path
+
+    monkeypatch.setattr(event, "get_group", get_group)
+    monkeypatch.setattr(plugin.renderer, "render", render)
+    before = await plugin.storage.snapshot(pid, plugin.actor(event))
+    result = json.loads(await plugin.custom_plan_render(event, pid, {}))
+    assert result["ok"] and result["result"]["sent"] == "image"
+    assert len(lookups) == lookup_count
+    assert captured == [{viewer if mode == "public" else "owner": expected}]
+    assert await plugin.storage.snapshot(pid, plugin.actor(event)) == before
+
+
+@pytest.mark.parametrize(
+    "failure", ["unsupported", "missing", "blank", "wrong_group", "timeout"]
+)
+async def test_unavailable_group_nickname_does_not_prevent_image(
+    plugin, tmp_path, monkeypatch, failure
+):
+    owner = Event(group="g1")
+    pid = json.loads(
+        await plugin.custom_plan_manage(
+            owner, "create", {"name": "学习", "preset": "checkin"}
+        )
+    )["result"]["plan_id"]
+    await plugin.custom_plan_configure(
+        owner, "view", {"plan_id": pid, "revision": 1, "type": "checkin"}
+    )
+    event = Event(user="member", group="g1", nickname="不能误用查询者昵称")
+
+    async def get_group(group_id):
+        if failure == "timeout":
+            raise TimeoutError
+        if failure == "unsupported":
+            return None
+        return SimpleNamespace(
+            group_id="other" if failure == "wrong_group" else "g1",
+            members=[]
+            if failure == "missing"
+            else [
+                SimpleNamespace(
+                    user_id="owner",
+                    nickname="  " if failure == "blank" else "其他群昵称",
+                )
+            ],
+        )
+
+    captured = []
+
+    async def render(plan, options, actor_user, user_names):
+        captured.append(user_names)
+        path = tmp_path / "no-name.png"
+        path.write_bytes(b"test")
+        return path
+
+    monkeypatch.setattr(event, "get_group", get_group)
+    monkeypatch.setattr(plugin.renderer, "render", render)
+    result = json.loads(await plugin.custom_plan_render(event, pid, {}))
+    assert result["ok"] and result["result"]["sent"] == "image"
+    assert captured == [{}]
+
+
+async def test_personal_plan_never_looks_up_nickname_even_in_group(plugin, monkeypatch):
+    event = Event(group="g1", nickname="无需展示")
+    actor = plugin.actor(event)
+    plan = create_plan(
+        actor,
+        {"name": "个人", "preset": "checkin", "scope": "person", "mode": "shared"},
+        "Asia/Shanghai",
+    )
+    plan["view"]["type"] = "checkin"
+    calls = []
+
+    async def get_group(group_id):
+        calls.append(group_id)
+
+    monkeypatch.setattr(event, "get_group", get_group)
+    assert await plugin.render_user_names(event, plan, actor) == {}
+    assert calls == []

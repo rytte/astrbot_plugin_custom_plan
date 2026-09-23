@@ -1,3 +1,19 @@
+{% if view.checkin_list %}
+<div class="section-head"><h2>打卡记录</h2><span class="muted">{{ view.total - view.completed }} 天未达标 · {{ view.completed }} 天已达标{% if view.scope_label %} · {{ view.scope_label }}{% endif %}{{ ' · 已筛选' if view.filtered else '' }}</span></div>
+{% for row in view.rows %}
+<div class="task {{ 'done' if row.done else '' }}">
+  <span class="task-mark">{{ '☑' if row.done else '☐' }}</span>
+  <div class="task-body">
+    <div class="task-title">{{ row.title }}</div>
+    <div class="muted">{{ row.status }} · {{ row.amount | display }} / {{ row.threshold | display }} {{ row.unit }}</div>
+    {% for note in row.notes %}<div class="note">{{ note }}</div>{% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="empty">暂无打卡记录。</div>
+{% endfor %}
+{% else %}
 <div class="section-head"><h2>待办事项</h2><span class="muted">{{ view.total - view.completed }} 项未完成 · {{ view.completed }} 项已完成{{ ' · 已筛选' if view.filtered else '' }}</span></div>
 {% for row in view.rows %}<div class="task {{ 'done' if row.done else '' }}"><span class="task-mark">{{ '☑' if row.done else '☐' }}</span><div class="task-body"><div class="task-title">{{ row.title }}</div><div class="muted">{{ row.status }}{% if row.completed_at %} · 完成于 {{ row.completed_at | localtime(plan.timezone) }}{% endif %}</div><div class="task-id">{{ row.record_id }}</div></div><span class="task-date">{{ row.due or '无截止日期' }}</span></div>{% else %}<div class="empty">暂无任务，可以说：“添加一个周五前完成的任务。”</div>{% endfor %}
+{% endif %}
 <div class="pager">第 {{ view.page }} / {{ view.pages }} 页</div>

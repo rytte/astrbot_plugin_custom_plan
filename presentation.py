@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from .appearance import LAYOUTS
 from .domain import (
     PlanError,
+    checkin_user,
     month_bounds,
     object_keys,
     select_records,
@@ -59,13 +60,56 @@ def checkin_days(plan: dict, records: list[dict]) -> dict:
     return days
 
 
-def build_view(plan: dict, options: dict, actor_user: str) -> dict:
+def checkin_records(
+    plan: dict, records: list[dict], actor_user: str
+) -> tuple[str, list[dict]]:
+    user = checkin_user(plan, actor_user)
+    return user, [r for r in records if r["author"] == user]
+
+
+def checkin_todo_rows(plan: dict, records: list[dict], actor_user: str) -> list[dict]:
+    _, personal = checkin_records(plan, records, actor_user)
+    days = checkin_days(plan, personal)
+    notes = defaultdict(list)
+    if plan["preset"] == "checkin":
+        for record in personal:
+            note = record["values"].get("note")
+            if note:
+                notes[record["values"][plan["rules"]["date_field"]]].append(note)
+    unit = next(
+        f.get("unit", "")
+        for f in plan["fields"]
+        if f["field_id"] == plan["rules"]["amount_field"]
+    )
+    rows = [
+        {
+            **details,
+            "date": day,
+            "title": f"{day} · {plan['name']}",
+            "status": "已达标" if details["done"] else "未达标",
+            "unit": unit,
+            "notes": notes[day],
+        }
+        for day, details in days.items()
+    ]
+    if not plan["view"].get("sort_field"):
+        rows.sort(key=lambda row: (row["done"], row["date"]))
+    return rows
+
+
+def build_view(
+    plan: dict,
+    options: dict,
+    actor_user: str,
+    user_names: dict[str, str] | None = None,
+) -> dict:
     """Compute bounded presentation data without mutating the source snapshot.
 
     Args:
         plan: Authorized immutable database snapshot.
         options: Per-render paging and month selection.
         actor_user: Trusted requesting user for public-group check-in views.
+        user_names: Platform-resolved nicknames keyed by user ID, for display only.
 
     Returns:
         Template data containing a view and independently computed blocks.
@@ -88,6 +132,7 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
         raise PlanError("page/column_page 为正整数，page_size 为 1～30。")
     config = plan["view"]
     kind = config["type"]
+    checkin_list = kind == "todo" and plan["rules"]["kind"] == "checkin"
     records = select_records(plan, config.get("filters", {}))
     sort_field = config.get("sort_field")
     if sort_field:
@@ -101,7 +146,7 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
             )
             + missing
         )
-    elif kind == "todo":
+    elif kind == "todo" and not checkin_list:
         records = sorted(
             records,
             key=lambda r: (
@@ -109,7 +154,9 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
             ),
         )
     current_day = today(plan)
-    page_count = max(1, math.ceil(len(records) / size))
+    daily_rows = checkin_todo_rows(plan, records, actor_user) if checkin_list else []
+    total = len(daily_rows) if checkin_list else len(records)
+    page_count = max(1, math.ceil(total / size))
     if config.get("visible", True) and kind in {"table", "todo"} and page > page_count:
         raise PlanError(f"记录只有 {page_count} 页。")
     view = {
@@ -117,12 +164,16 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
         "template": VIEW_TEMPLATES[kind],
         "name": VIEW_NAMES[kind],
         "visible": config.get("visible", True),
-        "total": len(records),
+        "total": total,
         "page": page,
         "page_size": size,
         "pages": page_count,
         "filtered": bool(config.get("filters")),
         "today": current_day.isoformat(),
+        "checkin_list": checkin_list,
+        "scope_label": (user_names or {}).get(checkin_user(plan, actor_user), "")
+        if plan["scope"] == "group" and (kind == "checkin" or checkin_list)
+        else "",
     }
     if not view["visible"]:
         pass
@@ -145,6 +196,11 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
                 for r in records[(page - 1) * size : page * size]
             ],
         )
+    elif checkin_list:
+        view.update(
+            completed=sum(row["done"] for row in daily_rows),
+            rows=daily_rows[(page - 1) * size : page * size],
+        )
     elif kind == "todo":
         view.update(
             completed=sum(
@@ -165,12 +221,7 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
             ],
         )
     elif kind == "checkin":
-        user = (
-            actor_user
-            if plan["scope"] == "group" and plan["mode"] == "public"
-            else plan["owner"]
-        )
-        personal = [r for r in records if r["author"] == user]
+        _, personal = checkin_records(plan, records, actor_user)
         days = checkin_days(plan, personal)
         cells = []
         for offset in range(27, -1, -1):
@@ -211,7 +262,6 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
             current=current,
             threshold=threshold,
             unit=amount_field.get("unit", ""),
-            scope_label="当前用户" if user == actor_user else "计划创建者",
             days_done=sum(cell["state"] == "done" for cell in cells),
         )
     elif kind == "calendar":
@@ -233,7 +283,7 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
                 key = date(start.year, start.month, day).isoformat() if day else ""
                 entries = grouped.get(key, [])
                 labels = []
-                for record in entries[:2]:
+                for record in entries if layout == "mobile" else entries[:2]:
                     if config.get("title_field"):
                         label = str(
                             record["values"].get(config["title_field"]) or "未命名"
@@ -252,14 +302,10 @@ def build_view(plan: dict, options: dict, actor_user: str) -> dict:
                         "count": len(entries),
                     }
                 )
-        date_name = next(
-            f["name"] for f in plan["fields"] if f["field_id"] == config["date_field"]
-        )
         view.update(
             month=month,
             cells=cells,
             undated=undated,
-            date_name=date_name,
             monthly_count=sum(len(items) for items in grouped.values()),
         )
     blocks = []

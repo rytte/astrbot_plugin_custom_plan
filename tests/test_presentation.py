@@ -22,6 +22,7 @@ OWNER = Actor("qq", "owner")
         ("table", "goal"),
         ("checkin", "checkin"),
         ("todo", "todo"),
+        ("todo", "checkin"),
         ("calendar", "todo"),
     ],
 )
@@ -76,8 +77,13 @@ def test_html_escaping_notes_and_unknown_template_rejection(tmp_path, layout):
         apply_change(deepcopy(plan), "view", {"type": "../../secrets"}, OWNER)
 
 
-def test_calendar_month_alignment_undated_and_record_overflow():
-    plan = create_plan(OWNER, {"name": "任务", "preset": "todo"}, "Asia/Shanghai")
+@pytest.mark.parametrize("layout", ["mobile", "desktop"])
+def test_calendar_month_alignment_undated_and_record_overflow(layout):
+    plan = create_plan(
+        OWNER,
+        {"name": "任务", "preset": "todo", "render_layout": layout},
+        "Asia/Shanghai",
+    )
     apply_change(plan, "view", {"type": "calendar"}, OWNER)
     apply_change(
         plan,
@@ -96,7 +102,9 @@ def test_calendar_month_alignment_undated_and_record_overflow():
     assert result["cells"][0]["day"] == 0
     assert result["cells"][1]["day"] == 1
     assert result["cells"][1]["count"] == 3
-    assert len(result["cells"][1]["labels"]) == 2
+    assert result["cells"][1]["labels"] == (
+        ["a", "b", "c"] if layout == "mobile" else ["a", "b"]
+    )
     assert result["undated"] == 1 and result["monthly_count"] == 3
     with pytest.raises(PlanError):
         build_view(plan, {"month": "2026-13"}, OWNER.user)

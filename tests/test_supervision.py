@@ -11,6 +11,7 @@ import pytest
 from astrbot_plugin_custom_plan import domain, supervision
 from astrbot_plugin_custom_plan import storage as storage_module
 from astrbot_plugin_custom_plan.domain import Actor, PlanError
+from astrbot_plugin_custom_plan.presentation import build_view
 from astrbot_plugin_custom_plan.renderer import LocalRenderer
 from astrbot_plugin_custom_plan.storage import Storage
 
@@ -637,6 +638,58 @@ async def test_supervised_view_cannot_substitute_completion_criteria(storage, cl
             {"type": "todo", "status_field": "extra_status", "done_value": "是"},
         )
     await change(storage, pid, "view", {"type": "todo"})
+
+
+async def test_supervised_checkin_can_change_view_without_new_completion_state(
+    storage, clock
+):
+    pid = await create(storage, "checkin")
+    rid = await add(storage, pid, {"amount": 0})
+    await enable(storage, pid)
+    before = await storage.snapshot(pid, OWNER)
+    agreement = await storage.supervision_rules(OWNER, pid)
+    await change(storage, pid, "view", {"type": "todo"})
+    after = await storage.snapshot(pid, OWNER)
+    for key in ("fields", "records", "rules", "preset"):
+        assert after[key] == before[key]
+    assert (await storage.supervision_rules(OWNER, pid))["rules_text"] == agreement[
+        "rules_text"
+    ]
+    assert after["supervision"]["active"]
+    fields = deepcopy(after["fields"])
+    fields.append(
+        {
+            "field_id": "aux_status",
+            "name": "辅助状态",
+            "type": "status",
+            "options": ["已完成", "待完成"],
+        }
+    )
+    await change(storage, pid, "fields", {"fields": fields})
+    await change(
+        storage,
+        pid,
+        "update_records",
+        {"records": [{"record_id": rid, "values": {"aux_status": "已完成"}}]},
+    )
+    after = await storage.snapshot(pid, OWNER)
+    assert not build_view(after, {}, OWNER.user)["view"]["rows"][0]["done"]
+    with pytest.raises(PlanError, match="不能指定独立"):
+        await change(
+            storage, pid, "view", {"status_field": "aux_status", "done_value": "已完成"}
+        )
+    assert (await storage.snapshot(pid, OWNER)) == after
+    await change(
+        storage,
+        pid,
+        "update_records",
+        {"records": [{"record_id": rid, "values": {"amount": 1}}]},
+    )
+    assert build_view(await storage.snapshot(pid, OWNER), {}, OWNER.user)["view"][
+        "rows"
+    ][0]["done"]
+    await change(storage, pid, "view", {"type": "checkin"})
+    assert (await storage.query(OWNER, {"plan_id": pid}))["supervision"]["active"]
 
 
 async def test_batch_corrections_are_audited_per_record_and_replay_is_safe(

@@ -16,7 +16,7 @@ from astrbot.core.star.filter.command import GreedyStr
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
 from .appearance import DEFAULT_THEME
-from .domain import Actor, PlanError, object_keys, text
+from .domain import Actor, PlanError, checkin_user, object_keys, text
 from .renderer import LocalRenderer
 from .storage import Storage, encode
 from .supervision import LIFECYCLE_ACTIONS
@@ -92,6 +92,36 @@ class CustomPlanPlugin(Star):
             key = uuid4().hex
             event.set_extra("custom_plan_request_id", key)
         return key
+
+    async def render_user_names(
+        self, event: AstrMessageEvent, plan: dict, actor: Actor
+    ) -> dict[str, str]:
+        """Resolve only the displayed group user's nickname from the platform."""
+        if (
+            plan["scope"] != "group"
+            or plan["rules"]["kind"] != "checkin"
+            or plan["view"]["type"] not in {"checkin", "todo"}
+            or not plan["view"].get("visible", True)
+        ):
+            return {}
+        user = checkin_user(plan, actor.user)
+        try:
+            if user == actor.user:
+                name = event.get_sender_name().strip()
+                if name:
+                    return {user: name}
+            async with asyncio.timeout(3):
+                group = await event.get_group(plan["group"])
+            if group is not None and str(group.group_id) == plan["group"]:
+                for member in group.members or []:
+                    if str(member.user_id) == user:
+                        name = (member.nickname or "").strip()
+                        if name:
+                            return {user: name}
+                        break
+        except Exception as exc:
+            self.logger.warning("Plan nickname lookup failed: %s", type(exc).__name__)
+        return {}
 
     async def execute(self, event: AstrMessageEvent, action: str, params: dict) -> str:
         """Resolve trusted identity and keep transport errors out of tool results.
@@ -224,9 +254,11 @@ class CustomPlanPlugin(Star):
 
         通用计划也可通过rules绑定已有字段：{kind:checkin,date_field,amount_field,threshold?,allow_backfill?,multiple_per_day?}；{kind:goal,date_field,amount_field,target}；{kind:todo,title_field,status_field,done_value,pending_value}。已有记录会按初始规则校验，必须先确认数据含义；已完成任务的完成时间记为绑定时刻。绑定后可切换视图，首版不支持直接互换已绑定的业务类型。
 
+        用户要求切换视图时先仅提交 type，缺项按工具错误澄清，不凭预设或监督状态直接拒绝。视图切换不改变业务规则；监督期间允许调整视图和新增非必填辅助字段，不能替换执行依据。
+
         Args:
             operation(string): fields、view、rules、block_add、block_update、block_delete 或 block_order。
-            params(object): 总是含plan_id、revision。fields加fields:[{field_id,name,type:text/number/date/status,required?:bool,unit?:string,options?:状态值数组}]，改名保留ID。view加type?:table/checkin/todo/calendar、visible?、fields?:展示字段ID数组、date_field?、amount_field?、title_field?、status_field?、done_value?、sort_field?、descending?、filters?；calendar须date_field，todo须title_field/status_field/done_value，checkin须打卡预设且date_field一致。rules: checkin可设threshold+effective_from（今天起）、allow_backfill、multiple_per_day；goal可设target。block_add加type:notes/statistics,title?,visible?,config；notes配置{text}；statistics配置{operation:count/sum/average/min/max,field_id?:数值字段,filters?,target?}，默认统计全量，独立于主视图分页与筛选。block_update加block_id及title?/visible?/config?（完整替换config）；block_delete加block_id；block_order加全部block_ids数组。
+            params(object): 总是含plan_id、revision。fields加fields:[{field_id,name,type:text/number/date/status,required?:bool,unit?:string,options?:状态值数组}]，改名保留ID。view加type?:table/checkin/todo/calendar、visible?、fields?:展示字段ID数组、date_field?、amount_field?、title_field?、status_field?、done_value?、sort_field?、descending?、filters?；所需字段绑定以工具校验为准。rules: checkin可设threshold+effective_from（今天起）、allow_backfill、multiple_per_day；goal可设target。block_add加type:notes/statistics,title?,visible?,config；notes配置{text}；statistics配置{operation:count/sum/average/min/max,field_id?:数值字段,filters?,target?}，默认统计全量，独立于主视图分页与筛选。block_update加block_id及title?/visible?/config?（完整替换config）；block_delete加block_id；block_order加全部block_ids数组。
         """
         if operation not in CONFIGURE_ACTIONS:
             return encode({"ok": False, "error": "不支持的配置操作。"})
@@ -246,8 +278,11 @@ class CustomPlanPlugin(Star):
         try:
             actor = self.actor(event)
             snapshot = await self.storage.snapshot(plan_id, actor)
+            user_names = await self.render_user_names(event, snapshot, actor)
             try:
-                path = await self.renderer.render(snapshot, options, actor.user)
+                path = await self.renderer.render(
+                    snapshot, options, actor.user, user_names
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

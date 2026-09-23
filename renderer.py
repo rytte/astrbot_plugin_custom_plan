@@ -65,8 +65,14 @@ class LocalRenderer:
                 + ");font-display:block;}"
             )
 
-    def html(self, plan: dict, options: dict, actor_user: str) -> str:
-        data = build_view(plan, options, actor_user)
+    def html(
+        self,
+        plan: dict,
+        options: dict,
+        actor_user: str,
+        user_names: dict[str, str] | None = None,
+    ) -> str:
+        data = build_view(plan, options, actor_user, user_names)
         layout = plan["render_layout"]
         theme = validate_render_theme(plan.get("render_theme"))
         definition = LAYOUTS[layout]
@@ -88,13 +94,20 @@ class LocalRenderer:
             generated_at=now_iso(),
         )
 
-    async def render(self, plan: dict, options: dict, actor_user: str) -> Path:
+    async def render(
+        self,
+        plan: dict,
+        options: dict,
+        actor_user: str,
+        user_names: dict[str, str] | None = None,
+    ) -> Path:
         """Render a snapshot while bounding queue length, pixels, and duration.
 
         Args:
             plan: Authorized versioned snapshot.
             options: Bounded paging options.
             actor_user: Trusted user identity for the check-in panel.
+            user_names: Platform-resolved nicknames, separate from model options.
 
         Returns:
             An owned temporary image path to remove after sending.
@@ -115,7 +128,9 @@ class LocalRenderer:
                 async with self.lock:
                     if self.closed:
                         raise PlanError("插件正在卸载。")
-                    html = await asyncio.to_thread(self.html, plan, options, actor_user)
+                    html = await asyncio.to_thread(
+                        self.html, plan, options, actor_user, user_names
+                    )
                     if self.browser is None or not self.browser.is_connected():
                         if self.playwright is None:
                             from playwright.async_api import async_playwright

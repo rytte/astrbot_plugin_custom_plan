@@ -68,7 +68,7 @@ p { margin: 6px 0; overflow-wrap: anywhere; }
 .record-field dt { color: var(--text-muted); }
 .check-current { color: var(--hero-text); }
 .check-streak { border-top: 1px solid var(--hero-divider); }
-.check-caption, .calendar-key { color: var(--text-muted); }
+.check-caption { color: var(--text-muted); }
 .mobile .calendar-day.today { background: var(--hero-background); }
 .calendar-count, .agenda-date { color: var(--calendar-text); }
 .agenda-day { border-top: 1px solid var(--agenda-divider); }

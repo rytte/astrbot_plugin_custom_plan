@@ -43,6 +43,14 @@ def today(plan: dict) -> date:
     return datetime.now(ZoneInfo(plan["timezone"])).date()
 
 
+def checkin_user(plan: dict, actor_user: str) -> str:
+    return (
+        actor_user
+        if plan["scope"] == "group" and plan["mode"] == "public"
+        else plan["owner"]
+    )
+
+
 def object_keys(value, allowed: set[str], label: str) -> dict:
     if not isinstance(value, dict) or any(not isinstance(k, str) for k in value):
         raise PlanError(f"{label}必须是对象。")
@@ -451,10 +459,27 @@ def validate_plan(plan: dict) -> None:
     ):
         raise PlanError("打卡面板需要 checkin 预设及其打卡日期字段。")
     if view["type"] == "todo":
-        require_field(plan, view.get("title_field"), {"text"})
-        status = require_field(plan, view.get("status_field"), {"status"})
-        if view.get("done_value") not in status["options"]:
-            raise PlanError("待办视图需要指定有效的 done_value。")
+        if kind == "checkin":
+            if view.get("status_field") or view.get("done_value"):
+                raise PlanError(
+                    "打卡列表按打卡数量和当日阈值计算达标状态，不能指定独立的 status_field 或 done_value。"
+                )
+        else:
+            missing = [
+                key
+                for key in ("title_field", "status_field", "done_value")
+                if not view.get(key)
+            ]
+            if missing:
+                raise PlanError(
+                    "待办视图缺少配置："
+                    + "、".join(missing)
+                    + "。请明确标题字段、状态字段和完成状态值；不能猜测记录含义或因此更改业务规则。"
+                )
+            require_field(plan, view["title_field"], {"text"})
+            status = require_field(plan, view["status_field"], {"status"})
+            if view["done_value"] not in status["options"]:
+                raise PlanError("待办视图的 done_value 必须是绑定状态字段的有效选项。")
     validate_filters(plan, view.get("filters", {}))
     if len(plan["records"]) > MAX_RECORDS:
         raise PlanError(f"首版每个计划最多 {MAX_RECORDS} 条记录。")
