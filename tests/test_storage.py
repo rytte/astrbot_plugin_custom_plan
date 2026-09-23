@@ -2,7 +2,7 @@ import asyncio
 import json
 import sqlite3
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from astrbot_plugin_custom_plan.domain import Actor, PlanError, allowed, create_plan
@@ -159,6 +159,49 @@ async def test_future_database_version_is_not_downgraded(storage):
         await storage.initialize()
     with sqlite3.connect(storage.path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+
+
+async def test_deleted_plans_are_purged_after_configured_retention(storage):
+    from astrbot_plugin_custom_plan.storage import Storage
+
+    created = await storage.mutate(
+        OWNER, "create", {"name": "过期计划"}, message_key="c"
+    )
+    pid = created["plan_id"]
+    await storage.mutate(OWNER, "delete", {}, pid, 1, "delete")
+    old = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat(timespec="seconds")
+    with sqlite3.connect(storage.path) as connection:
+        connection.execute(
+            "UPDATE changes SET created_at=? WHERE plan_id=? AND action='delete'",
+            (old, pid),
+        )
+
+    result = await storage.query(OWNER, {"include_deleted": True})
+    assert result["total"] == 0
+    with sqlite3.connect(storage.path) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM plans WHERE plan_id=?", (pid,)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM changes WHERE plan_id=?", (pid,)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM requests WHERE plan_id=?", (pid,)
+            ).fetchone()[0]
+            == 0
+        )
+
+    with pytest.raises(PlanError, match="deleted_retention_days"):
+        Storage(storage.path, deleted_retention_days=0)
+    with pytest.raises(PlanError, match="deleted_retention_days"):
+        Storage(storage.path, deleted_retention_days=3651)
 
 
 @pytest.mark.parametrize(

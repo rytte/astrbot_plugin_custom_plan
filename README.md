@@ -50,6 +50,7 @@ python -m playwright install --with-deps chromium
 ## 布局与主题
 
 插件配置 `default_render_layout` 决定**创建计划时**的初始样式，默认 `mobile`。创建时会把选定样式写入 SQLite 中该计划文档的 `render_layout` 字段；以后发送图片直接使用该字段。调整插件配置只影响之后创建的计划，不会改变已有计划。
+插件配置 deleted_retention_days 控制软删除计划的保留期，默认 7 天，范围为 1～3650 天。超过保留期的计划会在插件启动或下一次查询/写入时永久清理。
 
 主题独立保存为 `render_theme`，创建时取插件配置 `default_render_theme`，默认 `forest`（清新绿）。同一主题可用于移动版和桌面版，也适用于表格、打卡、待办、日历、统计和随笔。更改主题不改变布局、分页或记录内容，更改全局默认主题不影响已有计划。
 
@@ -180,7 +181,7 @@ python -m playwright install --with-deps chromium
 
 SQLite 保存于 `data/plugin_data/astrbot_plugin_custom_plan/plans.sqlite3`，插件更新不会覆盖数据。备份运行中的数据库时使用 SQLite 在线备份；或停止 AstrBot 后复制数据库，避免遗漏 WAL 中的数据。
 
-每次修改在事务中保存版本和操作者，保留最近 20 次变更快照。首版只允许撤销当前最近一次非创建、非撤销操作，不支持连续撤销。计划删除为软删除，可通过 `query` 的 `include_deleted:true` 找回 ID 和版本后撤销；撤销仍检查权限。
+每次修改在事务中保存版本和操作者，保留最近 20 次变更快照。首版只允许撤销当前最近一次非创建、非撤销操作，不支持连续撤销。删除的计划为软删除。删除后默认保留 7 天；可通过插件配置 deleted_retention_days 调整，范围为 1～3650 天。超过保留期的计划会在插件启动或下一次查询/写入时永久清理。保留期内可通过 query 的 include_deleted:true 找回 ID 和版本后撤销，撤销仍检查权限。
 
 ## 资源边界
 

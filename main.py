@@ -48,6 +48,7 @@ class CustomPlanPlugin(Star):
             self.settings.get("timezone", "Asia/Shanghai"),
             self.settings.get("default_render_layout", "mobile"),
             self.settings.get("default_render_theme", DEFAULT_THEME),
+            self.settings.get("deleted_retention_days", 7),
         )
         self.renderer = LocalRenderer(
             Path(get_astrbot_temp_path()) / "custom_plan", self.settings
@@ -58,6 +59,7 @@ class CustomPlanPlugin(Star):
         for key, default, low, high in (
             ("render_timeout", 40, 5, 180),
             ("render_queue_size", 4, 0, 20),
+            ("deleted_retention_days", 7, 1, 3650),
         ):
             value = self.settings.get(key, default)
             if type(value) is not int or not low <= value <= high:

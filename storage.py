@@ -8,6 +8,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .appearance import DEFAULT_THEME, THEMES
@@ -51,6 +52,7 @@ class Storage:
         timezone: str = "Asia/Shanghai",
         default_render_layout: str = "mobile",
         default_render_theme: str = DEFAULT_THEME,
+        deleted_retention_days: int = 7,
     ):
         self.path = Path(path)
         self.timezone = timezone
@@ -60,6 +62,12 @@ class Storage:
         self.default_render_theme = validate_render_theme(
             default_render_theme, "default_render_theme"
         )
+        if (
+            type(deleted_retention_days) is not int
+            or not 1 <= deleted_retention_days <= 3650
+        ):
+            raise PlanError("deleted_retention_days 必须是 1 到 3650 的整数。")
+        self.deleted_retention_days = deleted_retention_days
 
     @contextmanager
     def _connect(self):
@@ -84,6 +92,7 @@ class Storage:
             if version not in (0, 1, 2, 3):
                 raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 3。")
             if version == 3:
+                self._purge_expired_deleted(connection)
                 return
             if version == 0:
                 for statement in (
@@ -117,6 +126,43 @@ class Storage:
             else:
                 self._migrate_appearance(connection, version)
             connection.execute("PRAGMA user_version=3")
+            self._purge_expired_deleted(connection)
+
+    def _purge_expired_deleted(self, connection) -> None:
+        """Permanently remove soft-deleted plans after the configured retention period."""
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            days=self.deleted_retention_days
+        )
+        rows = connection.execute("SELECT plan_id, document FROM plans").fetchall()
+        expired = []
+        for row in rows:
+            document = json.loads(row["document"])
+            if not document.get("deleted"):
+                continue
+            deletion = connection.execute(
+                """
+                SELECT created_at
+                FROM changes
+                WHERE plan_id=? AND action='delete'
+                ORDER BY revision DESC
+                LIMIT 1
+                """,
+                (row["plan_id"],),
+            ).fetchone()
+            if deletion is None:
+                continue
+            try:
+                deleted_at = datetime.fromisoformat(deletion["created_at"])
+            except (TypeError, ValueError) as exc:
+                raise PlanError("已删除计划的删除时间格式无效，无法执行清理。") from exc
+            if deleted_at.tzinfo is None:
+                raise PlanError("已删除计划的删除时间缺少时区信息，无法执行清理。")
+            if deleted_at <= cutoff:
+                expired.append(row["plan_id"])
+        for plan_id in expired:
+            connection.execute("DELETE FROM requests WHERE plan_id=?", (plan_id,))
+            connection.execute("DELETE FROM changes WHERE plan_id=?", (plan_id,))
+            connection.execute("DELETE FROM plans WHERE plan_id=?", (plan_id,))
 
     @staticmethod
     def _migrate_appearance(connection, version: int) -> None:
@@ -191,7 +237,8 @@ class Storage:
         if type(params.get("include_deleted", False)) is not bool:
             raise PlanError("include_deleted 必须是布尔值。")
         with self._connect() as connection:
-            connection.execute("BEGIN")
+            connection.execute("BEGIN IMMEDIATE")
+            self._purge_expired_deleted(connection)
             if not params.get("plan_id"):
                 if params.get("filters"):
                     raise PlanError("记录筛选需要指定 plan_id。")
@@ -311,6 +358,7 @@ class Storage:
         key = hashlib.sha256(request_content.encode()).hexdigest()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            self._purge_expired_deleted(connection)
             replay = connection.execute(
                 "SELECT plan_id,result FROM requests WHERE request_key=?", (key,)
             ).fetchone()
