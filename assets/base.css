@@ -36,7 +36,6 @@ p { margin: 6px 0; overflow-wrap: anywhere; }
 .task-body { flex: 1; min-width: 0; }
 .task-title { overflow-wrap: anywhere; }
 .task.done .task-title { text-decoration: line-through; color: var(--text-completed); }
-.task-id { font-size: var(--font-task-id); color: var(--text-id); }
 .task-date { font-size: var(--font-muted); color: var(--text-date); white-space: nowrap; }
 .check-hero { background: var(--hero-background); padding: 22px; border-radius: var(--radius-hero); display: var(--hero-display); justify-content: space-between; align-items: center; margin: var(--hero-margin); box-shadow: var(--surface-shadow); }
 .hero-value { font-size: var(--font-hero); color: var(--hero-text); }

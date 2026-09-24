@@ -21,7 +21,6 @@
     <div class="task-title">{{ row.title }}</div>
     <div class="muted">{{ row.status }}{% if row.completed_at %} · 完成于 {{ row.completed_at | localtime(plan.timezone) }}{% endif %}</div>
     <div class="task-date">{% if row.due %}截止 {{ row.due }}{% else %}无截止日期{% endif %}</div>
-    <div class="task-id">{{ row.record_id }}</div>
   </div>
 </div>
 {% else %}

@@ -23,7 +23,6 @@
   --task-padding: 20px;
   --task-marker-width: 32px;
   --font-task-marker: 30px;
-  --font-task-id: 18px;
   --hero-display: block;
   --hero-margin: 0 0 22px;
   --font-hero: 36px;
@@ -64,7 +63,6 @@
 .task-title { font-size: 28px; font-weight: 600; margin-bottom: 6px; }
 .task-body > * { overflow-wrap: anywhere; }
 .task-date { margin-top: 8px; white-space: normal; }
-.task-id { margin-top: 8px; }
 .check-current { font-size: 42px; line-height: 1.35; overflow-wrap: anywhere; margin: 10px 0; }
 .check-streak { padding-top: 14px; margin-top: 16px; }
 .check-caption { font-size: 22px; margin-bottom: 12px; }
