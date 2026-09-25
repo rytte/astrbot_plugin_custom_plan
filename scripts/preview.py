@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from astrbot_plugin_browser.service import BrowserService  # noqa: E402
 from astrbot_plugin_custom_plan.appearance import (  # noqa: E402
     DEFAULT_THEME,
     LAYOUTS,
@@ -42,14 +43,19 @@ async def main():
     )
     args = parser.parse_args()
     config = {
-        "browser_executable": args.browser,
         "font_path": args.font,
         "render_timeout": 90,
     }
     output = args.output / args.theme / args.layout
     if args.supervised:
         output = output / "supervised"
-    renderer = LocalRenderer(output, config)
+    browser_service = BrowserService(
+        browser_executable=args.browser, startup_timeout=30
+    )
+    await browser_service.initialize()
+    renderer = LocalRenderer(
+        output, config, browser_service_resolver=lambda: browser_service
+    )
     await renderer.initialize()
     actor = Actor("preview", "demo")
     metrics = []
@@ -140,6 +146,7 @@ async def main():
         print(json.dumps(metrics, ensure_ascii=False, indent=2))
     finally:
         await renderer.close()
+        await browser_service.close()
 
 
 if __name__ == "__main__":

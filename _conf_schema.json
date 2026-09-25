@@ -3,7 +3,6 @@
   "render_enabled": {"type": "bool", "description": "启用本地图片渲染", "default": true},
   "default_render_theme": {"type": "string", "description": "新计划的默认主题", "hint": "填写已注册主题 ID：forest（清新绿）、midnight（深色）；主题列表可通过计划查询工具获取。主题与移动版/桌面版布局独立，创建时写入计划的 render_theme；修改配置不影响已有计划，每个计划可通过对话单独修改。保存后重载插件生效。", "default": "forest"},
   "default_render_layout": {"type": "string", "description": "新计划的默认图片样式", "hint": "mobile：移动版，640px 宽、大字号、记录卡片，默认每页 8 条；desktop：桌面版，1000px 宽、横向表格，默认每页 20 条。创建时写入计划，修改此配置不影响已有计划；每个计划可通过对话单独修改 render_layout。保存后重载插件生效。", "options": ["mobile", "desktop"], "default": "mobile"},
-  "browser_executable": {"type": "string", "description": "Chromium 可执行文件路径", "hint": "留空使用 Playwright 安装的 Chromium，也可由管理员配置本地 Chromium 或 Edge 路径。", "default": ""},
   "font_path": {"type": "string", "description": "本地中文字体路径", "hint": "可选。建议部署时配置 Noto Sans CJK 的 TTF、OTF 或 TTC 文件；不加载网络字体。", "default": ""},
   "render_timeout": {"type": "int", "description": "排队与渲染总超时（秒）", "default": 40},
   "render_queue_size": {"type": "int", "description": "最多等待的截图任务数", "default": 4},

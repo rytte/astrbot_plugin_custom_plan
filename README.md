@@ -2,14 +2,22 @@
 
 AstrBot 的自然语言计划插件。每个计划有一个主数据集，**默认使用通用表格**，也可切换为打卡面板、待办列表或日历；提供统计和随笔作为可选扩展区块。
 
+> [!IMPORTANT]
+>
+> 本插件的图片渲染依赖于 [浏览器服务]([rytte/astrbot_plugin_browser](https://github.com/rytte/astrbot_plugin_browser)) 插件。
+>
+> * `浏览器服务` 插件负责统一启动一个本地无头 Chromium，并为每次渲染提供独立的页面会话。
+> * 避免每个依赖浏览器渲染的插件重复配置，重复启动浏览器、减少内存占用，同时保持离线渲染和任务隔离。
+
 ## 安装
 
 需要 Python 3.12+、AstrBot 4.27+。将插件目录放入 AstrBot 的 `data/plugins/astrbot_plugin_custom_plan`，或在插件管理中上传本地 ZIP 包。
 
-在 **AstrBot 实际使用的 Python 环境**安装依赖与 Chromium：
+安装本插件依赖，并安装、启用 `astrbot_plugin_browser` 浏览器服务插件。浏览器路径和 Playwright 由服务插件统一管理：
 
 ```sh
 python -m pip install -r data/plugins/astrbot_plugin_custom_plan/requirements.txt
+python -m pip install -r data/plugins/astrbot_plugin_browser/requirements.txt
 python -m playwright install chromium
 ```
 
@@ -19,7 +27,7 @@ Linux / Docker 通常需要先安装浏览器系统依赖：
 python -m playwright install --with-deps chromium
 ```
 
-安装中文字体（例如 Noto Sans CJK），并在插件配置中填写本地 `font_path`。没有配置时使用系统字体；缺少中文字体的系统可能显示方框。可由管理员通过 `browser_executable` 指定已有 Chromium 或 Edge。插件不会在启动时自动下载浏览器，也不使用远程截图服务。
+安装中文字体（例如 Noto Sans CJK），并在本插件配置中填写本地 `font_path`。没有配置时使用系统字体；缺少中文字体的系统可能显示方框。浏览器服务插件启动 Chromium 并为每项渲染提供隔离页面；本插件不使用远程截图服务。
 
 启用插件后，确认 AstrBot 已开启模型工具调用。模型通过共用工具完成所有类型的计划操作，并可按需读取监督规则。
 
@@ -243,7 +251,7 @@ python -m ruff check .
 python -m ruff format --check .
 ```
 
-设置 `CUSTOM_PLAN_BROWSER` 为本地 Chromium 可执行文件路径，可启用真实截图测试；其余测试不启动浏览器。有相邻 AstrBot 源码及其依赖时，还会执行实际插件工具注册与消息发送集成测试。所有测试使用隔离的数据目录。
+设置 `ASTRBOT_BROWSER_EXECUTABLE` 为本地 Chromium 或 Edge 可执行文件路径，可启用真实截图测试；测试将启动一个 `BrowserService`，验证渲染器借用同一浏览器进程并在每次任务后释放页面上下文。其余测试不启动浏览器。有相邻 AstrBot 源码及其依赖时，还会执行实际插件工具注册与消息发送集成测试。所有测试使用隔离的数据目录。
 
 预览脚本增加 `--supervised` 可生成带盾牌的看板示例，存入对应主题与布局下的 `supervised/` 子目录，不修改任何实际计划。
 

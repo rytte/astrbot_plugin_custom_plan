@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from contextlib import suppress
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -18,7 +19,12 @@ from .presentation import build_view, display
 
 
 class LocalRenderer:
-    def __init__(self, directory: Path, config: dict):
+    def __init__(
+        self,
+        directory: Path,
+        config: dict,
+        browser_service_resolver: Callable[[], Any] | None = None,
+    ):
         self.directory = Path(directory)
         self.config = config
         self.root = Path(__file__).parent
@@ -33,8 +39,7 @@ class LocalRenderer:
             .astimezone(ZoneInfo(zone))
             .strftime("%Y-%m-%d %H:%M")
         )
-        self.browser = None
-        self.playwright = None
+        self.browser_service_resolver = browser_service_resolver
         self.lock = asyncio.Lock()
         self.pending = 0
         self.closed = False
@@ -131,29 +136,23 @@ class LocalRenderer:
                     html = await asyncio.to_thread(
                         self.html, plan, options, actor_user, user_names
                     )
-                    if self.browser is None or not self.browser.is_connected():
-                        if self.playwright is None:
-                            from playwright.async_api import async_playwright
-
-                            self.playwright = await async_playwright().start()
-                        launch = {"headless": True}
-                        if self.config.get("browser_executable"):
-                            launch["executable_path"] = self.config[
-                                "browser_executable"
-                            ]
-                        self.browser = await self.playwright.chromium.launch(**launch)
-                    context = await self.browser.new_context(
+                    service = (
+                        self.browser_service_resolver()
+                        if self.browser_service_resolver is not None
+                        else None
+                    )
+                    if service is None:
+                        raise PlanError(
+                            "浏览器服务不可用，请启用 astrbot_plugin_browser 插件。"
+                        )
+                    async with service.session(
                         viewport={
                             "width": LAYOUTS[plan["render_layout"]].width,
                             "height": 800,
                         },
-                        device_scale_factor=1,
-                        java_script_enabled=False,
-                        service_workers="block",
-                    )
-                    try:
-                        await context.route("**/*", lambda route: route.abort())
-                        page = await context.new_page()
+                        javascript_enabled=False,
+                        timeout=self.config.get("render_timeout", 40),
+                    ) as page:
                         await page.set_content(html, wait_until="load")
                         await page.evaluate("document.fonts.ready")
                         board = page.locator(".board")
@@ -169,10 +168,6 @@ class LocalRenderer:
                         await board.screenshot(
                             path=str(path), animations="disabled", timeout=15_000
                         )
-                    finally:
-                        with suppress(Exception):
-                            async with asyncio.timeout(5):
-                                await context.close()
                     return path
         except BaseException:
             path.unlink(missing_ok=True)
@@ -188,12 +183,3 @@ class LocalRenderer:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        async with self.lock:
-            try:
-                if self.browser is not None:
-                    await self.browser.close()
-            finally:
-                self.browser = None
-                if self.playwright is not None:
-                    await self.playwright.stop()
-                    self.playwright = None

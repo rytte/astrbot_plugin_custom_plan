@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import sqlite3
 from copy import deepcopy
@@ -226,17 +225,15 @@ async def test_theme_migration_rolls_back_and_preserves_existing_values(
     ] == extra_theme
 
 
-@pytest.mark.skipif(
-    not os.environ.get("CUSTOM_PLAN_BROWSER"), reason="Requires local Chromium"
-)
 async def test_registered_theme_renders_all_views_and_layouts_without_leaking(
-    tmp_path, extra_theme
+    tmp_path, extra_theme, browser_service
 ):
     from PIL import Image
 
     renderer = LocalRenderer(
         tmp_path,
-        {"browser_executable": os.environ["CUSTOM_PLAN_BROWSER"], "render_timeout": 90},
+        {"render_timeout": 90},
+        browser_service_resolver=lambda: browser_service,
     )
     await renderer.initialize()
     try:
@@ -273,7 +270,8 @@ async def test_registered_theme_renders_all_views_and_layouts_without_leaking(
                         assert image.convert("RGB").getpixel((0, 0)) == color
                         sizes.append(image.size)
                     path.unlink()
-                    assert renderer.browser.contexts == []
+                    assert browser_service.ready
+                    assert browser_service._browser.contexts == []
                 assert len(set(sizes)) == 1
                 assert plan == original
     finally:

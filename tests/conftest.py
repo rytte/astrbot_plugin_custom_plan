@@ -31,6 +31,21 @@ async def storage(tmp_path):
     return store
 
 
+@pytest.fixture
+async def browser_service():
+    executable = os.environ.get("ASTRBOT_BROWSER_EXECUTABLE", "")
+    if not executable:
+        pytest.skip("Set ASTRBOT_BROWSER_EXECUTABLE to run local browser coverage")
+    from astrbot_plugin_browser.service import BrowserService
+
+    service = BrowserService(browser_executable=executable)
+    try:
+        await service.initialize()
+        yield service
+    finally:
+        await service.close()
+
+
 def pytest_unconfigure(config):
     if _previous_root is None:
         os.environ.pop("ASTRBOT_ROOT", None)

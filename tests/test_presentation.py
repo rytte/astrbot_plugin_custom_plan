@@ -1,4 +1,3 @@
-import os
 from copy import deepcopy
 from pathlib import Path
 
@@ -214,19 +213,17 @@ def test_layout_controls_default_paging_but_explicit_options_win(tmp_path):
         renderer.html(plan, {}, OWNER.user)
 
 
-@pytest.mark.skipif(
-    not os.environ.get("CUSTOM_PLAN_BROWSER"),
-    reason="Set CUSTOM_PLAN_BROWSER to run real local Chromium screenshots",
-)
-async def test_real_screenshots_offline_cleanup_and_browser_reuse(tmp_path):
-    pytest.importorskip("playwright")
+async def test_real_screenshots_offline_cleanup_and_browser_reuse(
+    tmp_path, browser_service
+):
     renderer = LocalRenderer(
         tmp_path,
-        {"browser_executable": os.environ["CUSTOM_PLAN_BROWSER"], "render_timeout": 90},
+        {"render_timeout": 90},
+        browser_service_resolver=lambda: browser_service,
     )
     await renderer.initialize()
     try:
-        browser = None
+        browser = browser_service._browser
         for kind, preset in (
             ("table", "goal"),
             ("checkin", "checkin"),
@@ -249,10 +246,8 @@ async def test_real_screenshots_offline_cleanup_and_browser_reuse(tmp_path):
                 png = path.read_bytes()
                 assert png.startswith(b"\x89PNG")
                 assert int.from_bytes(png[16:20], "big") == width
-                assert renderer.browser.contexts == []
-                if browser is not None:
-                    assert renderer.browser is browser
-                browser = renderer.browser
+                assert browser_service._browser is browser
+                assert browser_service._browser.contexts == []
                 path.unlink()
         assert renderer.pending == 0
         assert not list(Path(tmp_path).glob("*.png"))

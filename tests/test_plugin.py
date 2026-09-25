@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -68,6 +67,18 @@ async def plugin(storage, tmp_path):
     await plugin.initialize()
     yield plugin
     await plugin.terminate()
+
+
+async def test_browser_service_resolution_requires_an_active_plugin(plugin):
+    service = object()
+    plugin.context.get_registered_star = lambda name: SimpleNamespace(
+        activated=True, star_cls=SimpleNamespace(service=service)
+    )
+    assert plugin.get_browser_service() is service
+
+    plugin.context.get_registered_star = lambda name: None
+    with pytest.raises(PlanError, match="请启用 astrbot_plugin_browser"):
+        plugin.get_browser_service()
 
 
 @pytest.mark.parametrize(
@@ -194,10 +205,29 @@ async def test_text_fallback_and_image_cleanup(plugin, tmp_path, monkeypatch):
     assert not image.exists()
 
 
-@pytest.mark.skipif(
-    not os.environ.get("CUSTOM_PLAN_BROWSER"), reason="Requires local Chromium"
-)
-async def test_midnight_switch_restart_render_and_undo_through_tools(plugin):
+async def test_render_without_options_uses_defaults(plugin, tmp_path, monkeypatch):
+    event = Event()
+    created = json.loads(
+        await plugin.custom_plan_manage(event, "create", {"name": "计划"})
+    )["result"]
+    image = tmp_path / "default-options.png"
+    seen_options = []
+
+    async def render(plan, options, actor_user, user_names):
+        seen_options.append(options)
+        image.write_bytes(b"test")
+        return image
+
+    monkeypatch.setattr(plugin.renderer, "render", render)
+    result = json.loads(await plugin.custom_plan_render(event, created["plan_id"]))
+    assert result["ok"] and result["result"]["sent"] == "image"
+    assert seen_options == [{}]
+    assert not image.exists()
+
+
+async def test_midnight_switch_restart_render_and_undo_through_tools(
+    plugin, browser_service
+):
     from astrbot_plugin_custom_plan.renderer import LocalRenderer
     from astrbot_plugin_custom_plan.storage import Storage
     from PIL import Image
@@ -223,7 +253,8 @@ async def test_midnight_switch_restart_render_and_undo_through_tools(plugin):
     await plugin.renderer.close()
     plugin.renderer = LocalRenderer(
         plugin.renderer.directory,
-        {"browser_executable": os.environ["CUSTOM_PLAN_BROWSER"], "render_timeout": 90},
+        {"render_timeout": 90},
+        browser_service_resolver=lambda: browser_service,
     )
     await plugin.renderer.initialize()
     for theme, color in (("midnight", (11, 18, 32)), ("forest", (237, 243, 239))):
@@ -252,6 +283,8 @@ async def test_midnight_switch_restart_render_and_undo_through_tools(plugin):
         result = json.loads(await plugin.custom_plan_render(event, pid, {}))
         assert result["ok"] and result["result"]["sent"] == "image"
         assert len(sent_paths) == 1 and not sent_paths[0].exists()
+        assert browser_service.ready
+        assert browser_service._browser.contexts == []
 
 
 @pytest.mark.parametrize("fail_render", [False, True])

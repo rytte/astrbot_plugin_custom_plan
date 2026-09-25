@@ -51,6 +51,10 @@ class CustomPlanPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | dict | None = None):
         super().__init__(context)
         self.settings = dict(config or {})
+        if self.settings.pop("browser_executable", ""):
+            self.logger.warning(
+                "custom_plan browser_executable is now configured by astrbot_plugin_browser."
+            )
         self.storage = Storage(
             StarTools.get_data_dir("astrbot_plugin_custom_plan") / "plans.sqlite3",
             self.settings.get("timezone", "Asia/Shanghai"),
@@ -59,8 +63,18 @@ class CustomPlanPlugin(Star):
             self.settings.get("deleted_retention_days", 7),
         )
         self.renderer = LocalRenderer(
-            Path(get_astrbot_temp_path()) / "custom_plan", self.settings
+            Path(get_astrbot_temp_path()) / "custom_plan",
+            self.settings,
+            browser_service_resolver=self.get_browser_service,
         )
+
+    def get_browser_service(self):
+        metadata = self.context.get_registered_star("astrbot_plugin_browser")
+        plugin = metadata.star_cls if metadata and metadata.activated else None
+        service = getattr(plugin, "service", None)
+        if service is None:
+            raise PlanError("浏览器服务不可用，请启用 astrbot_plugin_browser 插件。")
+        return service
 
     async def initialize(self):
         ZoneInfo(self.settings.get("timezone", "Asia/Shanghai"))
@@ -266,14 +280,15 @@ class CustomPlanPlugin(Star):
 
     @filter.llm_tool(name="custom_plan_render")
     async def custom_plan_render(
-        self, event: AstrMessageEvent, plan_id: str, options: dict
+        self, event: AstrMessageEvent, plan_id: str, options: dict | None = None
     ) -> str:
         """在本地生成并发送当前会话有权查看的计划看板。模板和截图不向远程渲染服务传输数据。图片是静态的，修改通过其他计划工具完成；缺少浏览器时发送文字摘要。
 
         Args:
             plan_id(string): 查询得到的计划ID。
-            options(object): 可留空。page默认1，page_size为1～30（移动版默认8，桌面版默认20），column_page默认1（每页6个字段，移动版纵向排成卡片），month为YYYY-MM（日历月份）。使用计划中保存的render_layout和render_theme；需要改变布局或主题时通过custom_plan_manage的update修改该计划。
+            options(object): 可省略或传空对象。page默认1，page_size为1～30（移动版默认8，桌面版默认20），column_page默认1（每页6个字段，移动版纵向排成卡片），month为YYYY-MM（日历月份）。使用计划中保存的render_layout和render_theme；需要改变布局或主题时通过custom_plan_manage的update修改该计划。
         """
+        options = {} if options is None else options
         path = None
         try:
             actor = self.actor(event)
