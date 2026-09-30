@@ -67,7 +67,6 @@ def test_todo_preset_has_no_status_field_or_binding():
     assert {definition["field_id"] for definition in plan["fields"]} == {
         "title",
         "amount",
-        "due",
         "note",
     }
     assert plan["rules"] == {

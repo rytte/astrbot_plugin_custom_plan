@@ -330,8 +330,10 @@ async def test_progress_correction_window_audit_and_batch_rollback(storage, cloc
     ][0] == history["entries"][0]
 
 
-async def test_todo_completion_corrections_do_not_refresh_window(storage, clock):
+async def test_todo_completion_corrections_do_not_refresh_window(storage, clock, due_field):
     pid = await create(storage, "todo")
+    plan = await storage.snapshot(pid, OWNER)
+    await change(storage, pid, "fields", {"fields": plan["fields"] + [due_field]})
     record = await add(storage, pid, {"title": "阅读"})
     await enable(storage, pid)
     clock.now += timedelta(days=1)

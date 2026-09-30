@@ -83,6 +83,28 @@ def todo_done(record: dict, amount_field: str) -> bool:
     return value is not None and number(value, "数量") > 0
 
 
+def optional_field_id(plan: dict, identifier: str | None, kind: str) -> str | None:
+    return next(
+        (
+            definition["field_id"]
+            for definition in plan["fields"]
+            if definition["field_id"] == identifier and definition["type"] == kind
+        ),
+        None,
+    )
+
+
+def todo_title_field(plan: dict) -> str | None:
+    for identifier in (
+        plan["view"].get("title_field"),
+        plan["rules"].get("title_field"),
+        "title",
+    ):
+        if optional_field_id(plan, identifier, "text"):
+            return identifier
+    return None
+
+
 def parse_date(value) -> date:
     if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
         raise PlanError("日期必须是 YYYY-MM-DD。")
@@ -243,9 +265,8 @@ def create_plan(
             ]
     elif preset == "todo":
         plan["fields"] = [
-            field("title", "任务", "text", required=True),
+            field("title", "任务", "text"),
             field("amount", "数量", "number", required=True),
-            field("due", "截止日期", "date"),
             field("note", "备注", "text"),
         ]
         plan["rules"] = {
@@ -256,7 +277,6 @@ def create_plan(
         plan["view"].update(
             title_field="title",
             amount_field="amount",
-            date_field="due",
         )
     validate_plan(plan)
     authorize(plan, actor, True)
@@ -392,7 +412,8 @@ def validate_plan(plan: dict) -> None:
     if kind == "goal" and number(rules["target"], "目标值") <= 0:
         raise PlanError("目标值必须大于 0。")
     if kind == "todo":
-        require_field(plan, rules["title_field"], {"text"})
+        if rules.get("title_field"):
+            require_field(plan, rules["title_field"], {"text"})
         require_field(plan, rules["amount_field"], {"number"})
     view = object_keys(
         plan["view"],
@@ -447,16 +468,11 @@ def validate_plan(plan: dict) -> None:
                     "打卡列表必须使用原打卡日期和数量字段，按当日阈值计算达标状态。"
                 )
         else:
-            missing = [
-                key for key in ("title_field", "amount_field") if not view.get(key)
-            ]
-            if missing:
+            if not view.get("amount_field"):
                 raise PlanError(
-                    "待办视图缺少配置："
-                    + "、".join(missing)
-                    + "。请明确标题字段和数量字段；数量为 0 时待完成，大于 0 时已完成，不能猜测记录含义或因此更改业务规则。"
+                    "待办视图缺少配置：amount_field。请明确数量字段；数量为 0 时待完成，"
+                    "大于 0 时已完成。标题可选，缺少时使用日期和计划名；不能猜测记录含义或因此更改业务规则。"
                 )
-            require_field(plan, view["title_field"], {"text"})
             require_field(plan, view["amount_field"], {"number"})
     validate_filters(plan, view.get("filters", {}))
     if len(plan["records"]) > MAX_RECORDS:
@@ -469,7 +485,6 @@ def validate_plan(plan: dict) -> None:
         for definition in plan["fields"]:
             validate_value(definition, values.get(definition["field_id"]))
         if kind == "todo":
-            text(values.get(rules["title_field"]), "任务名称", 500, False)
             if number(values.get(rules["amount_field"]), "数量") < 0:
                 raise PlanError("待办数量不能为负数；0 表示待完成，大于 0 表示已完成。")
         if kind in {"checkin", "goal"}:
@@ -622,9 +637,10 @@ def apply_change(plan: dict, action: str, params: dict, actor: Actor) -> list[st
                 )
                 rules = {
                     "kind": "todo",
-                    "title_field": params.get("title_field"),
                     "amount_field": params.get("amount_field"),
                 }
+                if params.get("title_field"):
+                    rules["title_field"] = params["title_field"]
                 for record in plan["records"]:
                     record["completed_at"] = (
                         now_iso() if todo_done(record, rules["amount_field"]) else None

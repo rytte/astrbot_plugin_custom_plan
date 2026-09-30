@@ -5,7 +5,8 @@ from __future__ import annotations
 import calendar
 import math
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from .appearance import LAYOUTS
 from .domain import (
@@ -13,9 +14,11 @@ from .domain import (
     checkin_user,
     month_bounds,
     object_keys,
+    optional_field_id,
     select_records,
     today,
     todo_done,
+    todo_title_field,
     validate_render_layout,
 )
 
@@ -68,15 +71,63 @@ def checkin_records(
     return user, [r for r in records if r["author"] == user]
 
 
+def record_date(plan: dict, record: dict) -> str:
+    for identifier in (
+        plan["rules"].get("date_field"),
+        plan["view"].get("date_field"),
+        "date",
+    ):
+        if optional_field_id(plan, identifier, "date"):
+            value = record["values"].get(identifier)
+            if value:
+                return value
+    return (
+        datetime.fromisoformat(record["created_at"])
+        .astimezone(ZoneInfo(plan["timezone"]))
+        .date()
+        .isoformat()
+    )
+
+
+def todo_details(plan: dict, records: list[dict], day: str) -> dict:
+    title_field = todo_title_field(plan)
+    titles = list(
+        dict.fromkeys(
+            record["values"][title_field]
+            for record in records
+            if title_field and record["values"].get(title_field)
+        )
+    )
+    notes = (
+        [record["values"]["note"] for record in records if record["values"].get("note")]
+        if optional_field_id(plan, "note", "text")
+        else []
+    )
+    show_due = optional_field_id(plan, "due", "date") is not None
+    due_dates = (
+        list(
+            dict.fromkeys(
+                record["values"]["due"] for record in records if record["values"].get("due")
+            )
+        )
+        if show_due
+        else []
+    )
+    return {
+        "date": day,
+        "title": "、".join(titles) if titles else f"{day} · {plan['name']}",
+        "notes": notes,
+        "show_due": show_due,
+        "due_dates": due_dates,
+    }
+
+
 def checkin_todo_rows(plan: dict, records: list[dict], actor_user: str) -> list[dict]:
     _, personal = checkin_records(plan, records, actor_user)
     days = checkin_days(plan, personal)
-    notes = defaultdict(list)
-    if plan["preset"] == "checkin":
-        for record in personal:
-            note = record["values"].get("note")
-            if note:
-                notes[record["values"][plan["rules"]["date_field"]]].append(note)
+    grouped = defaultdict(list)
+    for record in personal:
+        grouped[record["values"][plan["rules"]["date_field"]]].append(record)
     unit = next(
         f.get("unit", "")
         for f in plan["fields"]
@@ -85,15 +136,44 @@ def checkin_todo_rows(plan: dict, records: list[dict], actor_user: str) -> list[
     rows = [
         {
             **details,
-            "date": day,
-            "title": f"{day} · {plan['name']}",
+            **todo_details(plan, grouped[day], day),
             "unit": unit,
-            "notes": notes[day],
+            "state_label": "已达标" if details["done"] else "未达标",
+            "completed_at": None,
         }
         for day, details in days.items()
     ]
     if not plan["view"].get("sort_field"):
         rows.sort(key=lambda row: (row["done"], row["date"]))
+    return rows
+
+
+def todo_rows(plan: dict, records: list[dict], actor_user: str) -> list[dict]:
+    if plan["rules"]["kind"] == "checkin":
+        return checkin_todo_rows(plan, records, actor_user)
+    amount_field = plan["view"]["amount_field"]
+    unit = next(
+        definition.get("unit", "")
+        for definition in plan["fields"]
+        if definition["field_id"] == amount_field
+    )
+    rows = []
+    for record in records:
+        done = todo_done(record, amount_field)
+        rows.append(
+            {
+                **todo_details(plan, [record], record_date(plan, record)),
+                "record_id": record["record_id"],
+                "amount": record["values"].get(amount_field),
+                "threshold": None,
+                "unit": unit,
+                "done": done,
+                "state_label": "已完成" if done else "待完成",
+                "completed_at": record["completed_at"],
+            }
+        )
+    if not plan["view"].get("sort_field"):
+        rows.sort(key=lambda row: row["done"])
     return rows
 
 
@@ -146,14 +226,9 @@ def build_view(
             )
             + missing
         )
-    elif kind == "todo" and not checkin_list:
-        records = sorted(
-            records,
-            key=lambda record: todo_done(record, config["amount_field"]),
-        )
     current_day = today(plan)
-    daily_rows = checkin_todo_rows(plan, records, actor_user) if checkin_list else []
-    total = len(daily_rows) if checkin_list else len(records)
+    list_rows = todo_rows(plan, records, actor_user) if kind == "todo" else []
+    total = len(list_rows) if kind == "todo" else len(records)
     page_count = max(1, math.ceil(total / size))
     if config.get("visible", True) and kind in {"table", "todo"} and page > page_count:
         raise PlanError(f"记录只有 {page_count} 页。")
@@ -169,6 +244,9 @@ def build_view(
         "filtered": bool(config.get("filters")),
         "today": current_day.isoformat(),
         "checkin_list": checkin_list,
+        "item_unit": "天" if checkin_list else "项",
+        "pending_label": "未达标" if checkin_list else "未完成",
+        "completed_label": "已达标" if checkin_list else "已完成",
         "scope_label": (user_names or {}).get(checkin_user(plan, actor_user), "")
         if plan["scope"] == "group" and (kind == "checkin" or checkin_list)
         else "",
@@ -194,27 +272,10 @@ def build_view(
                 for r in records[(page - 1) * size : page * size]
             ],
         )
-    elif checkin_list:
-        view.update(
-            completed=sum(row["done"] for row in daily_rows),
-            rows=daily_rows[(page - 1) * size : page * size],
-        )
     elif kind == "todo":
         view.update(
-            completed=sum(
-                todo_done(record, config["amount_field"]) for record in records
-            ),
-            rows=[
-                {
-                    "title": record["values"].get(config["title_field"])
-                    or "未命名任务",
-                    "done": todo_done(record, config["amount_field"]),
-                    "due": record["values"].get(config.get("date_field")),
-                    "completed_at": record["completed_at"],
-                    "record_id": record["record_id"],
-                }
-                for record in records[(page - 1) * size : page * size]
-            ],
+            completed=sum(row["done"] for row in list_rows),
+            rows=list_rows[(page - 1) * size : page * size],
         )
     elif kind == "checkin":
         _, personal = checkin_records(plan, records, actor_user)

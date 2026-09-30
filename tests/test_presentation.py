@@ -43,12 +43,15 @@ def test_renderer_footer_shows_updated_time_before_generated_time(
     ],
 )
 @pytest.mark.parametrize("layout", ["mobile", "desktop"])
-def test_all_templates_empty_and_populated(tmp_path, kind, preset, layout):
+def test_all_templates_empty_and_populated(tmp_path, kind, preset, layout, due_field):
     plan = create_plan(
         OWNER,
         {"name": "九月学习计划", "preset": preset, "render_layout": layout},
         "Asia/Shanghai",
     )
+    if preset == "todo":
+        apply_change(plan, "fields", {"fields": plan["fields"] + [due_field]}, OWNER)
+        apply_change(plan, "view", {"date_field": "due"}, OWNER)
     apply_change(plan, "view", {"type": kind}, OWNER)
     renderer = LocalRenderer(tmp_path, {})
     empty = renderer.html(plan, {}, OWNER.user)
@@ -94,13 +97,14 @@ def test_html_escaping_notes_and_unknown_template_rejection(tmp_path, layout):
 
 
 @pytest.mark.parametrize("layout", ["mobile", "desktop"])
-def test_calendar_month_alignment_undated_and_record_overflow(layout):
+def test_calendar_month_alignment_undated_and_record_overflow(layout, due_field):
     plan = create_plan(
         OWNER,
         {"name": "任务", "preset": "todo", "render_layout": layout},
         "Asia/Shanghai",
     )
-    apply_change(plan, "view", {"type": "calendar"}, OWNER)
+    apply_change(plan, "fields", {"fields": plan["fields"] + [due_field]}, OWNER)
+    apply_change(plan, "view", {"type": "calendar", "date_field": "due"}, OWNER)
     apply_change(
         plan,
         "add_records",
@@ -231,7 +235,7 @@ def test_layout_controls_default_paging_but_explicit_options_win(tmp_path):
 
 
 async def test_real_screenshots_offline_cleanup_and_browser_reuse(
-    tmp_path, browser_service
+    tmp_path, browser_service, due_field
 ):
     renderer = LocalRenderer(
         tmp_path,
@@ -250,6 +254,9 @@ async def test_real_screenshots_offline_cleanup_and_browser_reuse(
             plan = create_plan(
                 OWNER, {"name": "本地渲染验证", "preset": preset}, "Asia/Shanghai"
             )
+            if preset == "todo":
+                apply_change(plan, "fields", {"fields": plan["fields"] + [due_field]}, OWNER)
+                apply_change(plan, "view", {"date_field": "due"}, OWNER)
             apply_change(plan, "view", {"type": kind}, OWNER)
             values = (
                 {"title": "学习中文字体", "due": "2026-09-21"}

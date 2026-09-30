@@ -23,6 +23,11 @@ os.environ["ASTRBOT_ROOT"] = _runtime.name
 
 
 @pytest.fixture
+def due_field():
+    return {"field_id": "due", "name": "截止日期", "type": "date", "required": False}
+
+
+@pytest.fixture
 async def storage(tmp_path):
     from astrbot_plugin_custom_plan.storage import Storage
 

@@ -85,12 +85,20 @@ async def main():
             )
             current = today(plan)
             if preset == "todo":
+                if kind == "calendar":
+                    apply_change(
+                        plan, "fields",
+                        {"fields": plan["fields"] + [{"field_id": "due", "name": "截止日期", "type": "date"}]},
+                        actor,
+                    )
+                    apply_change(plan, "view", {"date_field": "due"}, actor)
                 records = [
                     {
                         "values": {
                             "title": title,
                             "amount": 1 if index < 2 else 0,
-                            "due": (current + timedelta(days=index - 1)).isoformat(),
+                            "note": "按实际完成情况记录。",
+                            **({"due": (current + timedelta(days=index - 1)).isoformat()} if kind == "calendar" else {}),
                         }
                     }
                     for index, title in enumerate(

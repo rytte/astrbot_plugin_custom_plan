@@ -8,7 +8,15 @@ from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .domain import PlanError, object_keys, parse_date, require_field, text
+from .domain import (
+    PlanError,
+    object_keys,
+    optional_field_id,
+    parse_date,
+    require_field,
+    text,
+    todo_title_field,
+)
 
 RULES_FILE = Path(__file__).parent / "assets" / "supervision_rules.txt"
 CORRECTION_MINUTES = 10
@@ -83,10 +91,16 @@ def proposal(plan: dict, params: dict, now: datetime) -> dict:
     critical = {
         rules[key]
         for key in ("date_field", "amount_field", "title_field")
-        if key in rules
+        if rules.get(key)
     }
     if rules["kind"] == "todo" and plan["view"].get("date_field"):
         critical.add(plan["view"]["date_field"])
+    if rules["kind"] == "todo":
+        title_field = todo_title_field(plan)
+        if title_field:
+            critical.add(title_field)
+        if optional_field_id(plan, "due", "date"):
+            critical.add("due")
     extra = params.get("protected_fields", [])
     if not isinstance(extra, list) or any(not isinstance(key, str) for key in extra):
         raise PlanError("protected_fields 必须是字段 ID 数组。")
@@ -174,9 +188,10 @@ def enforce(
     critical = set(state["constraints"]["protected_fields"])
     rules = before["rules"]
     if rules["kind"] == "todo" and after["view"]["type"] == "todo":
-        if any(
-            after["view"].get(key) != rules[key]
-            for key in ("title_field", "amount_field")
+        original_title = todo_title_field(before)
+        if (
+            after["view"].get("amount_field") != rules["amount_field"]
+            or (original_title and todo_title_field(after) != original_title)
         ):
             raise PlanError("监督期间待办视图必须使用原任务字段和完成依据。")
     old_records = {r["record_id"]: r for r in before["records"]}

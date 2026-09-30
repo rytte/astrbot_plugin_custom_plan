@@ -249,7 +249,7 @@ async def test_theme_migration_rolls_back_and_preserves_existing_values(
 
 
 async def test_registered_theme_renders_all_views_and_layouts_without_leaking(
-    tmp_path, extra_theme, browser_service
+    tmp_path, extra_theme, browser_service, due_field
 ):
     from PIL import Image
 
@@ -271,6 +271,9 @@ async def test_registered_theme_renders_all_views_and_layouts_without_leaking(
                 {"name": "主题扩展验证", "preset": preset, "render_theme": "forest"},
                 "Asia/Shanghai",
             )
+            if kind == "calendar":
+                apply_change(plan, "fields", {"fields": plan["fields"] + [due_field]}, OWNER)
+                apply_change(plan, "view", {"date_field": "due"}, OWNER)
             apply_change(plan, "view", {"type": kind}, OWNER)
             apply_change(
                 plan,

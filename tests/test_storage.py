@@ -430,7 +430,7 @@ async def test_checkin_rules_dates_and_per_user_uniqueness(storage, monkeypatch)
         )
 
 
-async def test_task_completion_reopen_and_immutable_author(storage):
+async def test_task_completion_reopen_and_immutable_author(storage, due_field):
     created = await storage.mutate(
         OWNER, "create", {"name": "任务", "preset": "todo"}, message_key="c"
     )
@@ -454,12 +454,16 @@ async def test_task_completion_reopen_and_immutable_author(storage):
     )
     task = (await storage.snapshot(pid, OWNER))["records"][0]
     assert task["completed_at"]
+    plan = await storage.snapshot(pid, OWNER)
+    await storage.mutate(
+        OWNER, "fields", {"fields": plan["fields"] + [due_field]}, pid, 3, "due-field"
+    )
     await storage.mutate(
         OWNER,
         "update_records",
         {"records": [{"record_id": rid, "values": {"due": "2026-10-01"}}]},
         pid,
-        3,
+        4,
         "move",
     )
     assert (await storage.snapshot(pid, OWNER))["records"][0]["completed_at"] == task[
@@ -470,7 +474,7 @@ async def test_task_completion_reopen_and_immutable_author(storage):
         "update_records",
         {"records": [{"record_id": rid, "values": {"amount": 0}}]},
         pid,
-        4,
+        5,
         "reopen",
     )
     assert (await storage.snapshot(pid, OWNER))["records"][0]["completed_at"] is None
@@ -480,16 +484,20 @@ async def test_task_completion_reopen_and_immutable_author(storage):
             "add_records",
             {"records": [{"author": "other", "values": {"title": "spoof"}}]},
             pid,
-            5,
+            6,
             "spoof",
         )
 
 
-async def test_query_filters_and_cross_scope_secrecy(storage):
+async def test_query_filters_and_cross_scope_secrecy(storage, due_field):
     created = await storage.mutate(
         OWNER, "create", {"name": "秘密", "preset": "todo"}, message_key="c"
     )
     pid = created["plan_id"]
+    plan = await storage.snapshot(pid, OWNER)
+    await storage.mutate(
+        OWNER, "fields", {"fields": plan["fields"] + [due_field]}, pid, 1, "due-field"
+    )
     await storage.mutate(
         OWNER,
         "add_records",
@@ -500,7 +508,7 @@ async def test_query_filters_and_cross_scope_secrecy(storage):
             ]
         },
         pid,
-        1,
+        2,
         "r",
     )
     result = await storage.query(
