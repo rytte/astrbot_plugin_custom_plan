@@ -45,6 +45,7 @@ class LocalRenderer:
         self.closed = False
         self.tasks: set[asyncio.Task] = set()
         self.font_css = ""
+        self.image_loader: Callable[[str, str], str] | None = None
         assets = self.root / "assets"
         self.base_styles = (assets / "base.css").read_text(encoding="utf-8")
         self.layout_styles = {
@@ -78,6 +79,13 @@ class LocalRenderer:
         user_names: dict[str, str] | None = None,
     ) -> str:
         data = build_view(plan, options, actor_user, user_names)
+        for record in data["image_records"]:
+            for image in record["images"]:
+                image["src"] = (
+                    self.image_loader(plan["plan_id"], image["image_id"])
+                    if self.image_loader
+                    else ""
+                )
         layout = plan["render_layout"]
         theme = validate_render_theme(plan.get("render_theme"))
         definition = LAYOUTS[layout]

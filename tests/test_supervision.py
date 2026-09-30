@@ -18,6 +18,82 @@ from astrbot_plugin_custom_plan.storage import Storage
 OWNER = Actor("qq-1", "owner")
 
 
+async def test_supervision_images_append_correct_and_retain_audit_references(
+    storage, clock
+):
+    from io import BytesIO
+
+    from PIL import Image
+
+    content = BytesIO()
+    Image.new("RGB", (40, 30), "green").save(content, format="PNG")
+    first = storage.media.prepare(content.getvalue())
+    second = storage.media.prepare(content.getvalue())
+    pid = await create(storage, preset="checkin")
+    added = await storage.mutate(
+        OWNER,
+        "add_records",
+        {"records": [{"values": {}, "images": {"add": [1]}}]},
+        pid,
+        1,
+        "initial-image",
+        {1: first},
+    )
+    rid = added["changed_ids"][0]
+    await enable(storage, pid)
+    current = await storage.snapshot(pid, OWNER)
+    await storage.mutate(
+        OWNER,
+        "update_records",
+        {"records": [{"record_id": rid, "values": {}, "images": {"add": [1]}}]},
+        pid,
+        current["revision"],
+        "append-image",
+        {1: second},
+    )
+    patch = {
+        "records": [
+            {"record_id": rid, "values": {}, "images": {"remove": [first.image_id]}}
+        ]
+    }
+    with pytest.raises(PlanError, match="凭证图片"):
+        await change(storage, pid, "update_records", patch)
+    await change(storage, pid, "correct_records", {**patch, "reason": "传错了照片"})
+    assert (await storage.snapshot(pid, OWNER))["records"][0]["images"] == [
+        second.image_id
+    ]
+    history = await storage.query(OWNER, {"plan_id": pid, "supervision_history": True})
+    assert history["entries"][0]["document"]["corrections"][0]["before"]["images"] == [
+        first.image_id,
+        second.image_id,
+    ]
+    with sqlite3.connect(storage.path) as connection:
+        connection.execute("DELETE FROM changes WHERE plan_id=?", (pid,))
+        connection.execute(
+            "UPDATE media SET orphaned_at=?",
+            ((datetime.now(timezone.utc) - timedelta(days=10)).isoformat(),),
+        )
+    await storage.cleanup_media(force=True)
+    assert storage.media.path(first.image_id).exists()
+    clock.now += timedelta(minutes=11)
+    with pytest.raises(PlanError, match="纠错窗口"):
+        await change(
+            storage,
+            pid,
+            "correct_records",
+            {
+                "records": [
+                    {
+                        "record_id": rid,
+                        "values": {},
+                        "images": {"remove": [second.image_id]},
+                    }
+                ],
+                "reason": "不能重置窗口",
+            },
+        )
+
+
 @pytest.fixture
 def clock(monkeypatch):
     clock = SimpleNamespace(now=datetime(2026, 9, 23, 4, tzinfo=timezone.utc))
@@ -330,7 +406,9 @@ async def test_progress_correction_window_audit_and_batch_rollback(storage, cloc
     ][0] == history["entries"][0]
 
 
-async def test_todo_completion_corrections_do_not_refresh_window(storage, clock, due_field):
+async def test_todo_completion_corrections_do_not_refresh_window(
+    storage, clock, due_field
+):
     pid = await create(storage, "todo")
     plan = await storage.snapshot(pid, OWNER)
     await change(storage, pid, "fields", {"fields": plan["fields"] + [due_field]})
@@ -546,7 +624,7 @@ async def test_v3_upgrade_preserves_documents_and_undo_history(storage):
     with sqlite3.connect(storage.path) as connection:
         assert connection.execute("SELECT * FROM plans").fetchall() == documents
         assert connection.execute("SELECT * FROM changes").fetchall() == changes
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
     assert (await storage.query(OWNER, {"plan_id": pid}))["supervision"][
         "status"
     ] == "off"

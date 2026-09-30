@@ -247,7 +247,7 @@ async def test_legacy_todos_migrate_with_deleted_plans_and_undo(storage, version
     assert restored["records"][0]["values"]["status"] == 0
     assert restored["records"][0]["completed_at"] is None
     with sqlite3.connect(storage.path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 async def test_status_migration_rolls_back_on_invalid_legacy_values(storage):

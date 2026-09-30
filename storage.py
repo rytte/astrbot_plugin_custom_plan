@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,7 @@ from .domain import (
     validate_render_layout,
     validate_render_theme,
 )
+from .media import IMAGE_ID, MediaLibrary, PreparedImage, referenced_images
 
 
 def encode(value) -> str:
@@ -129,6 +131,7 @@ class Storage:
         default_render_layout: str = "mobile",
         default_render_theme: str = DEFAULT_THEME,
         deleted_retention_days: int = 7,
+        media_config: dict | None = None,
     ):
         self.path = Path(path)
         self.timezone = timezone
@@ -144,6 +147,8 @@ class Storage:
         ):
             raise PlanError("deleted_retention_days 必须是 1 到 3650 的整数。")
         self.deleted_retention_days = deleted_retention_days
+        self.media = MediaLibrary(self.path.parent / "media", media_config)
+        self._media_cleanup_at = 0.0
 
     @contextmanager
     def _connect(self):
@@ -158,6 +163,8 @@ class Storage:
 
     async def initialize(self) -> None:
         await asyncio.to_thread(self._initialize)
+        self.media.directory.mkdir(parents=True, exist_ok=True)
+        await self.cleanup_media(force=True)
 
     def _initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -165,9 +172,9 @@ class Storage:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, 5):
-                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 5。")
-            if version == 5:
+            if version not in (0, 1, 2, 3, 4, 5, 6):
+                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 6。")
+            if version == 6:
                 self._purge_expired_deleted(connection)
                 return
             if version == 0:
@@ -219,10 +226,291 @@ class Storage:
                 "CREATE INDEX IF NOT EXISTS supervision_log_plan ON supervision_log(plan_id, id)",
             ):
                 connection.execute(statement)
-            if version:
+            if version in (1, 2, 3, 4):
                 self._migrate_status_fields(connection)
-            connection.execute("PRAGMA user_version=5")
+            connection.execute("""CREATE TABLE IF NOT EXISTS media (
+                image_id TEXT PRIMARY KEY,
+                plan_id TEXT NOT NULL REFERENCES plans(plan_id) ON DELETE CASCADE,
+                author TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                orphaned_at TEXT)""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS media_plan ON media(plan_id)"
+            )
+            connection.execute("PRAGMA user_version=6")
             self._purge_expired_deleted(connection)
+
+    async def cleanup_media(self, force: bool = False) -> None:
+        if not force and time.monotonic() - self._media_cleanup_at < 60:
+            return
+        await asyncio.to_thread(self._cleanup_media)
+        self._media_cleanup_at = time.monotonic()
+
+    def _cleanup_media(self) -> None:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=self.media.image_cleanup_days)
+        removable = []
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._purge_expired_deleted(connection)
+            references = set()
+            for table, column in (
+                ("plans", "document"),
+                ("changes", "previous"),
+                ("supervision_log", "document"),
+            ):
+                for row in connection.execute(
+                    f"SELECT {column} FROM {table} WHERE {column} IS NOT NULL"
+                ):
+                    references.update(referenced_images(json.loads(row[0])))
+            for row in connection.execute(
+                "SELECT image_id, orphaned_at FROM media"
+            ).fetchall():
+                identifier = row["image_id"]
+                if identifier in references:
+                    connection.execute(
+                        "UPDATE media SET orphaned_at=NULL WHERE image_id=?",
+                        (identifier,),
+                    )
+                elif row["orphaned_at"] is None:
+                    connection.execute(
+                        "UPDATE media SET orphaned_at=? WHERE image_id=?",
+                        (now.isoformat(), identifier),
+                    )
+                elif datetime.fromisoformat(row["orphaned_at"]) <= cutoff:
+                    connection.execute(
+                        "DELETE FROM media WHERE image_id=?", (identifier,)
+                    )
+                    removable.extend(
+                        (self.media.path(identifier), self.media.path(identifier, True))
+                    )
+            known = {row[0] for row in connection.execute("SELECT image_id FROM media")}
+            for path in self.media.directory.glob("img_*"):
+                identifier = path.name.split(".", 1)[0]
+                if (
+                    IMAGE_ID.fullmatch(identifier)
+                    and (identifier not in known or ".tmp-" in path.name)
+                    and path.is_file()
+                    and path.stat().st_mtime <= cutoff.timestamp()
+                ):
+                    removable.append(path)
+        for path in set(removable):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _request_key(actor, action, params, plan_id, message_key):
+        if not message_key:
+            raise PlanError("缺少可信的消息标识。")
+        try:
+            content = encode(
+                [
+                    actor.platform,
+                    actor.user,
+                    actor.group,
+                    message_key,
+                    action,
+                    plan_id,
+                    params,
+                ]
+            )
+        except (ValueError, TypeError) as exc:
+            raise PlanError("参数必须是有效 JSON，不能包含无穷大或 NaN。") from exc
+        if len(content.encode("utf-8")) > 128_000:
+            raise PlanError("单次操作过大，请分批提交。")
+        return hashlib.sha256(content.encode()).hexdigest()
+
+    async def replay(self, actor, action, params, plan_id, message_key):
+        return await asyncio.to_thread(
+            self._replay, actor, action, params, plan_id, message_key
+        )
+
+    def _replay(self, actor, action, params, plan_id, message_key):
+        key = self._request_key(actor, action, params, plan_id, message_key)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._purge_expired_deleted(connection)
+            entry = connection.execute(
+                "SELECT plan_id,result FROM requests WHERE request_key=?", (key,)
+            ).fetchone()
+            if entry is None:
+                return None
+            current = self._load(
+                connection, entry["plan_id"], actor, write=True, deleted=True
+            )
+            return {
+                **json.loads(entry["result"]),
+                "replayed": True,
+                "current_revision": current["revision"],
+                "deleted": current["deleted"],
+                "supervision": supervision.summary(
+                    self._supervision(connection, entry["plan_id"]),
+                    supervision.utc_now(),
+                ),
+            }
+
+    def _image_payload(self, params: dict, prepared: dict[int, PreparedImage]) -> dict:
+        payload = deepcopy(params)
+        if not isinstance(payload.get("records"), list):
+            raise PlanError("records 必须是数组。")
+        for item in payload["records"]:
+            if not isinstance(item, dict) or "images" not in item:
+                continue
+            patch = object_keys(item["images"], {"add", "remove"}, "图片操作")
+            additions = patch.get("add", [])
+            if (
+                not isinstance(additions, list)
+                or any(type(index) is not int or index < 1 for index in additions)
+                or len(set(additions)) != len(additions)
+            ):
+                raise PlanError(
+                    "images.add 必须是当前消息中不重复的图片序号，从 1 开始。"
+                )
+            if any(index not in prepared for index in additions):
+                raise PlanError(
+                    "只能添加当前消息中由插件读取的图片，不能指定网址、路径或图片 ID。"
+                )
+            patch["add"] = [prepared[index].image_id for index in additions]
+        return payload
+
+    def _save_images(self, connection, plan, before, prepared, actor):
+        old_records = (
+            {record["record_id"]: record for record in before.get("records", [])}
+            if before
+            else {}
+        )
+        for record in plan["records"]:
+            old = old_records.get(record["record_id"], {}).get("images", [])
+            if len(record.get("images", [])) > self.media.images_per_record and len(
+                record.get("images", [])
+            ) > len(old):
+                raise PlanError(
+                    f"每条记录最多附 {self.media.images_per_record} 张图片。"
+                )
+        identifiers = referenced_images(plan)
+        existing = {
+            row[0]
+            for row in connection.execute(
+                "SELECT image_id FROM media WHERE plan_id=?", (plan["plan_id"],)
+            )
+        }
+        additions = {
+            image.image_id: image
+            for image in prepared.values()
+            if image.image_id in identifiers and image.image_id not in existing
+        }
+        if identifiers - existing - set(additions):
+            raise PlanError("记录包含不存在或不属于本计划的图片。")
+        size = sum(image.size for image in additions.values())
+        if not size:
+            return
+        plan_size = connection.execute(
+            "SELECT COALESCE(SUM(size),0) FROM media WHERE plan_id=?",
+            (plan["plan_id"],),
+        ).fetchone()[0]
+        total_size = sum(
+            path.stat().st_size
+            for path in self.media.directory.glob("img_*")
+            if path.is_file()
+        )
+        if plan_size + size > self.media.image_plan_quota_mb * 1024 * 1024:
+            raise PlanError(
+                "本计划图片存储额度已满，历史图片也占额度；请等待无引用图片回收或联系管理员调整额度。"
+            )
+        if total_size + size > self.media.image_total_quota_mb * 1024 * 1024:
+            raise PlanError("插件图片存储总额度已满，请联系管理员。")
+        if any(
+            connection.execute(
+                "SELECT 1 FROM media WHERE image_id=?", (identifier,)
+            ).fetchone()
+            for identifier in additions
+        ):
+            raise PlanError("图片 ID 已属于其他计划，不能复用或覆盖。")
+        for image in additions.values():
+            self.media.write(image)
+            connection.execute(
+                "INSERT INTO media VALUES(?,?,?,?,?,?,?,?,NULL)",
+                (
+                    image.image_id,
+                    plan["plan_id"],
+                    actor.user,
+                    image.sha256,
+                    image.size,
+                    image.width,
+                    image.height,
+                    now_iso(),
+                ),
+            )
+
+    def _discard_uncommitted_images(self, prepared):
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                for image in prepared.values():
+                    if (
+                        not IMAGE_ID.fullmatch(image.image_id)
+                        or connection.execute(
+                            "SELECT 1 FROM media WHERE image_id=?", (image.image_id,)
+                        ).fetchone()
+                    ):
+                        continue
+                    for thumbnail in (False, True):
+                        try:
+                            self.media.path(image.image_id, thumbnail).unlink(
+                                missing_ok=True
+                            )
+                        except OSError:
+                            pass
+        except sqlite3.Error:
+            pass
+
+    def image_thumbnail(self, plan_id: str, image_id: str) -> str:
+        with self._connect() as connection:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM media WHERE plan_id=? AND image_id=?",
+                    (plan_id, image_id),
+                ).fetchone()
+                is None
+            ):
+                return ""
+        return self.media.thumbnail_url(image_id)
+
+    async def record_images(
+        self, actor: Actor, plan_id: str, record_id: str
+    ) -> list[dict]:
+        return await asyncio.to_thread(self._record_images, actor, plan_id, record_id)
+
+    def _record_images(self, actor, plan_id, record_id):
+        with self._connect() as connection:
+            plan = self._load(connection, plan_id, actor)
+            record = next(
+                (
+                    record
+                    for record in plan["records"]
+                    if record["record_id"] == record_id
+                ),
+                None,
+            )
+            if record is None:
+                raise PlanError("记录不存在，请先查询有效的 record_id。")
+            result = []
+            for identifier in record.get("images", []):
+                row = connection.execute(
+                    "SELECT image_id,author,size,width,height,created_at FROM media WHERE image_id=? AND plan_id=?",
+                    (identifier, plan_id),
+                ).fetchone()
+                path = self.media.path(identifier)
+                if row is None or not path.is_file():
+                    raise PlanError("记录附图文件缺失，请联系管理员恢复备份。")
+                result.append({**dict(row), "path": path})
+            return result
 
     @staticmethod
     def _supervision(connection, plan_id: str) -> dict | None:
@@ -555,7 +843,9 @@ class Storage:
             return plan
 
     async def query(self, actor: Actor, params: dict) -> dict:
-        return await asyncio.to_thread(self._query, actor, params)
+        result = await asyncio.to_thread(self._query, actor, params)
+        await self.cleanup_media()
+        return result
 
     def _query(self, actor: Actor, params: dict) -> dict:
         if "supervision_history" in params:
@@ -653,6 +943,24 @@ class Storage:
             result.pop("owner")
             result.pop("group")
             result["records"] = records[(page - 1) * size : page * size]
+            page_images = referenced_images(result["records"])
+            result["image_metadata"] = {
+                row["image_id"]: dict(row)
+                for row in connection.execute(
+                    "SELECT image_id,author,size,width,height,created_at FROM media WHERE plan_id=?",
+                    (plan["plan_id"],),
+                )
+                if row["image_id"] in page_images
+            }
+            result["image_limits"] = {
+                "per_record": self.media.images_per_record,
+                "max_mb": self.media.image_max_mb,
+                "plan_quota_mb": self.media.image_plan_quota_mb,
+            }
+            result["image_storage_bytes"] = connection.execute(
+                "SELECT COALESCE(SUM(size),0) FROM media WHERE plan_id=?",
+                (plan["plan_id"],),
+            ).fetchone()[0]
             result.update(
                 supervision=supervision.summary(
                     self._supervision(connection, plan["plan_id"]),
@@ -676,6 +984,7 @@ class Storage:
         plan_id: str = "",
         revision: int = 0,
         message_key: str = "",
+        prepared_images: dict[int, PreparedImage] | None = None,
     ) -> dict:
         """Commit one operation with a stable request key and revision check.
 
@@ -690,32 +999,31 @@ class Storage:
         Returns:
             Committed IDs and revision, or the original result on a retry.
         """
-        return await asyncio.to_thread(
-            self._mutate, actor, action, params, plan_id, revision, message_key
-        )
+        prepared = prepared_images or {}
+        try:
+            result = await asyncio.to_thread(
+                self._mutate,
+                actor,
+                action,
+                params,
+                plan_id,
+                revision,
+                message_key,
+                prepared,
+            )
+        except Exception:
+            if prepared:
+                await asyncio.to_thread(self._discard_uncommitted_images, prepared)
+            raise
+        await self.cleanup_media()
+        return result
 
-    def _mutate(self, actor, action, params, plan_id, revision, message_key):
+    def _mutate(
+        self, actor, action, params, plan_id, revision, message_key, prepared_images
+    ):
         if not isinstance(params, dict):
             raise PlanError("params 必须是对象。")
-        if not message_key:
-            raise PlanError("缺少可信的消息标识。")
-        try:
-            request_content = encode(
-                [
-                    actor.platform,
-                    actor.user,
-                    actor.group,
-                    message_key,
-                    action,
-                    plan_id,
-                    params,
-                ]
-            )
-        except (ValueError, TypeError) as exc:
-            raise PlanError("参数必须是有效 JSON，不能包含无穷大或 NaN。") from exc
-        if len(request_content.encode("utf-8")) > 128_000:
-            raise PlanError("单次操作过大，请分批提交。")
-        key = hashlib.sha256(request_content.encode()).hexdigest()
+        key = self._request_key(actor, action, params, plan_id, message_key)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._purge_expired_deleted(connection)
@@ -737,6 +1045,7 @@ class Storage:
                     ),
                 }
             previous = None
+            before = None
             changed = []
             audit = None
             now = supervision.utc_now()
@@ -813,6 +1122,8 @@ class Storage:
                         raise PlanError(
                             "监督期间禁止删除计划或记录；请先按冷静期流程退出监督。"
                         )
+                    if operation in {"add_records", "update_records"}:
+                        payload = self._image_payload(payload, prepared_images)
                     changed = apply_change(plan, operation, payload, actor)
                     if active:
                         corrections = supervision.enforce(
@@ -845,6 +1156,7 @@ class Storage:
             serialized = encode(plan)
             if len(serialized.encode("utf-8")) > 4_000_000:
                 raise PlanError("计划数据超过 4 MB，请减少长文本或拆分计划。")
+            self._save_images(connection, plan, before, prepared_images, actor)
             connection.execute(
                 "INSERT INTO plans(plan_id,platform,owner,group_id,document) VALUES(?,?,?,?,?) ON CONFLICT(plan_id) DO UPDATE SET document=excluded.document",
                 (

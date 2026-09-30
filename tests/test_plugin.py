@@ -48,6 +48,9 @@ class Event:
     def get_message_str(self):
         return self.message_str
 
+    def get_messages(self):
+        return getattr(self.message_obj, "message", [])
+
     def plain_result(self, value):
         return ("text", value)
 
@@ -98,6 +101,11 @@ async def test_browser_service_resolution_requires_an_active_plugin(plugin):
             {"name": "阅读打卡", "preset": "checkin"},
         ),
         ("plan show p_demo", "render_command", {"plan_id": "p_demo", "page": 1}),
+        (
+            "plan images p_demo r_demo",
+            "images_command",
+            {"plan_id": "p_demo", "record_id": "r_demo"},
+        ),
         (
             "plan show p_demo 2",
             "render_command",
@@ -151,6 +159,7 @@ async def test_real_astrbot_registration_and_shared_tools(plugin):
         "records",
         "configure",
         "render",
+        "images",
         "supervision_rules",
     ):
         assert llm_tools.get_func("custom_plan_" + name) is not None
@@ -560,3 +569,179 @@ async def test_personal_plan_never_looks_up_nickname_even_in_group(plugin, monke
     monkeypatch.setattr(event, "get_group", get_group)
     assert await plugin.render_user_names(event, plan, actor) == {}
     assert calls == []
+
+
+@pytest.fixture
+def image_event():
+    from io import BytesIO
+
+    from astrbot.api.message_components import Image
+    from PIL import Image as RasterImage
+
+    stream = BytesIO()
+    RasterImage.new("RGB", (60, 40), "blue").save(stream, format="PNG")
+    event = Event(message="image-message")
+    event.message_obj.message = [Image.fromBytes(stream.getvalue())]
+    return event
+
+
+async def test_message_images_are_saved_only_explicitly_and_sent_privately(
+    plugin, image_event
+):
+    created = json.loads(
+        await plugin.custom_plan_manage(
+            image_event, "create", {"name": "图片打卡", "preset": "checkin"}
+        )
+    )
+    pid = created["result"]["plan_id"]
+    assert not list(plugin.storage.media.directory.iterdir())
+    query = json.loads(await plugin.custom_plan_query(image_event, {"plan_id": pid}))
+    assert query["result"]["message_images"] == [{"index": 1}]
+    added = json.loads(
+        await plugin.custom_plan_records(
+            image_event,
+            "add",
+            {
+                "plan_id": pid,
+                "revision": 1,
+                "records": [{"values": {}, "images": {"add": [1]}}],
+            },
+        )
+    )
+    assert added["ok"]
+    rid = added["result"]["changed_ids"][0]
+    stored = (await plugin.storage.query(plugin.actor(image_event), {"plan_id": pid}))[
+        "records"
+    ][0]
+    assert len(stored["images"]) == 1
+    denied_event = Event(user="other")
+    denied = json.loads(await plugin.custom_plan_images(denied_event, pid, rid))
+    assert not denied["ok"] and not denied_event.sent
+    viewed = json.loads(await plugin.custom_plan_images(image_event, pid, rid))
+    assert viewed["ok"] and viewed["result"]["count"] == 1
+    assert Path(image_event.sent[0][1]).is_file()
+    assert "path" not in viewed["result"]
+    wrong_id = json.loads(
+        await plugin.custom_plan_images(image_event, pid, rid, "img_" + "0" * 32)
+    )
+    assert not wrong_id["ok"] and len(image_event.sent) == 1
+
+
+async def test_upload_retry_does_not_require_an_expired_source(
+    plugin, image_event, monkeypatch
+):
+    pid = json.loads(
+        await plugin.custom_plan_manage(
+            image_event, "create", {"name": "图片", "preset": "checkin"}
+        )
+    )["result"]["plan_id"]
+    params = {
+        "plan_id": pid,
+        "revision": 1,
+        "records": [{"values": {}, "images": {"add": [1]}}],
+    }
+    first = json.loads(await plugin.custom_plan_records(image_event, "add", params))
+    assert first["ok"]
+
+    async def expired(source):
+        raise AssertionError("An idempotent retry must not download again")
+
+    monkeypatch.setattr(plugin.storage.media, "read_source", expired)
+    image_event.message_obj.message = []
+    replay = json.loads(await plugin.custom_plan_records(image_event, "add", params))
+    assert replay["ok"] and replay["result"]["replayed"]
+    assert replay["result"]["changed_ids"] == first["result"]["changed_ids"]
+    assert len(list(plugin.storage.media.directory.glob("*.webp"))) == 2
+
+
+async def test_untrusted_sources_indices_and_read_only_uploads_are_rejected_before_read(
+    plugin, image_event, monkeypatch
+):
+    owner = Event(group="g1", message="create")
+    pid = json.loads(
+        await plugin.custom_plan_manage(
+            owner, "create", {"name": "图片", "preset": "checkin"}
+        )
+    )["result"]["plan_id"]
+    reads = []
+
+    async def track(source):
+        reads.append(source)
+        raise AssertionError("No source should be read")
+
+    monkeypatch.setattr(plugin.storage.media, "read_source", track)
+    image_event.group = "g1"
+    for additions in (
+        ["http://127.0.0.1/image"],
+        ["C:\\secret.png"],
+        [True],
+        [0],
+        [2],
+        [1, 1],
+    ):
+        result = json.loads(
+            await plugin.custom_plan_records(
+                image_event,
+                "add",
+                {
+                    "plan_id": pid,
+                    "revision": 1,
+                    "records": [{"values": {}, "images": {"add": additions}}],
+                },
+            )
+        )
+        assert not result["ok"]
+    image_event.user = "member"
+    denied = json.loads(
+        await plugin.custom_plan_records(
+            image_event,
+            "add",
+            {
+                "plan_id": pid,
+                "revision": 1,
+                "records": [{"values": {}, "images": {"add": [1]}}],
+            },
+        )
+    )
+    assert not denied["ok"] and "权限" in denied["error"]
+    assert not reads and not list(plugin.storage.media.directory.iterdir())
+
+
+async def test_image_delivery_rechecks_record_between_sends(
+    plugin, image_event, monkeypatch
+):
+    pid = json.loads(
+        await plugin.custom_plan_manage(
+            image_event, "create", {"name": "图片", "preset": "checkin"}
+        )
+    )["result"]["plan_id"]
+    image_event.message_obj.message *= 2
+    added = json.loads(
+        await plugin.custom_plan_records(
+            image_event,
+            "add",
+            {
+                "plan_id": pid,
+                "revision": 1,
+                "records": [{"values": {}, "images": {"add": [1, 2]}}],
+            },
+        )
+    )
+    rid = added["result"]["changed_ids"][0]
+    send = image_event.send
+
+    async def remove_after_send(message):
+        await send(message)
+        await plugin.storage.mutate(
+            plugin.actor(image_event),
+            "delete_records",
+            {"records": [{"record_id": rid}]},
+            pid,
+            2,
+            "concurrent-delete",
+        )
+
+    monkeypatch.setattr(image_event, "send", remove_after_send)
+    result = json.loads(await plugin.custom_plan_images(image_event, pid, rid))
+    assert not result["ok"] and result["sent_count"] == 1
+    assert len(image_event.sent) == 1

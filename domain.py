@@ -479,6 +479,18 @@ def validate_plan(plan: dict) -> None:
         raise PlanError(f"首版每个计划最多 {MAX_RECORDS} 条记录。")
     dates = set()
     for record in plan["records"]:
+        images = record.get("images", [])
+        if (
+            not isinstance(images, list)
+            or len(images) > 30
+            or any(
+                not isinstance(value, str)
+                or not re.fullmatch(r"img_[0-9a-f]{32}", value)
+                for value in images
+            )
+            or len(set(images)) != len(images)
+        ):
+            raise PlanError("记录附图必须是最多 30 个不重复的有效图片 ID。")
         values = record["values"]
         if set(values) - ids:
             raise PlanError("记录包含未知字段。")
@@ -699,10 +711,10 @@ def apply_change(plan: dict, action: str, params: dict, actor: Actor) -> list[st
         for item in items:
             object_keys(
                 item,
-                {"values"}
+                {"values", "images"}
                 if action == "add_records"
                 else (
-                    {"record_id", "values"}
+                    {"record_id", "values", "images"}
                     if action == "update_records"
                     else {"record_id"}
                 ),
@@ -745,6 +757,28 @@ def apply_change(plan: dict, action: str, params: dict, actor: Actor) -> list[st
                 plan["records"].append(record)
             previous = deepcopy(record["values"])
             record["values"].update(deepcopy(values))
+            if "images" in item:
+                patch = object_keys(item["images"], {"add", "remove"}, "图片操作")
+                additions, removals = patch.get("add", []), patch.get("remove", [])
+                for identifiers in (additions, removals):
+                    if (
+                        not isinstance(identifiers, list)
+                        or any(
+                            not isinstance(identifier, str)
+                            or not re.fullmatch(r"img_[0-9a-f]{32}", identifier)
+                            for identifier in identifiers
+                        )
+                        or len(set(identifiers)) != len(identifiers)
+                    ):
+                        raise PlanError("图片操作必须包含不重复的有效图片 ID。")
+                existing = record.get("images", [])
+                if set(removals) - set(existing):
+                    raise PlanError("要移除的图片不属于这条记录。")
+                if set(additions) & (set(existing) - set(removals)):
+                    raise PlanError("不能重复添加同一张图片。")
+                record["images"] = [
+                    identifier for identifier in existing if identifier not in removals
+                ] + additions
             record["updated_at"] = now_iso()
             if rules["kind"] == "checkin":
                 day = parse_date(record["values"].get(rules["date_field"]))

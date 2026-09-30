@@ -98,7 +98,7 @@ async def test_layout_migration_covers_deleted_plans_and_undo_and_runs_once(stor
     await upgraded.initialize()
     assert await upgraded.snapshot(pid, OWNER, include_deleted=True) == before
     with sqlite3.connect(storage.path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
         assert all(
             json.loads(row[0])["render_layout"] == "mobile"
             for row in connection.execute(
@@ -157,11 +157,11 @@ async def test_layout_migration_is_atomic_and_preserves_explicit_layout(storage)
 
 async def test_future_database_version_is_not_downgraded(storage):
     with sqlite3.connect(storage.path) as connection:
-        connection.execute("PRAGMA user_version=6")
+        connection.execute("PRAGMA user_version=7")
     with pytest.raises(PlanError, match="数据库版本"):
         await storage.initialize()
     with sqlite3.connect(storage.path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
 
 
 async def test_deleted_plans_are_purged_after_configured_retention(storage):

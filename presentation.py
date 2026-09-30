@@ -107,7 +107,9 @@ def todo_details(plan: dict, records: list[dict], day: str) -> dict:
     due_dates = (
         list(
             dict.fromkeys(
-                record["values"]["due"] for record in records if record["values"].get("due")
+                record["values"]["due"]
+                for record in records
+                if record["values"].get("due")
             )
         )
         if show_due
@@ -115,6 +117,7 @@ def todo_details(plan: dict, records: list[dict], day: str) -> dict:
     )
     return {
         "date": day,
+        "record_ids": [record["record_id"] for record in records],
         "title": "、".join(titles) if titles else f"{day} · {plan['name']}",
         "notes": notes,
         "show_due": show_due,
@@ -365,6 +368,44 @@ def build_view(
             undated=undated,
             monthly_count=sum(len(items) for items in grouped.values()),
         )
+    visible_records = []
+    if view["visible"]:
+        if kind == "table":
+            visible_records = records[(page - 1) * size : page * size]
+        elif kind == "todo":
+            visible_ids = {
+                identifier for row in view["rows"] for identifier in row["record_ids"]
+            }
+            visible_records = [
+                record for record in records if record["record_id"] in visible_ids
+            ]
+        elif kind == "checkin":
+            visible_records = [
+                record
+                for record in personal
+                if record["values"][plan["rules"]["date_field"]]
+                == current_day.isoformat()
+            ]
+        elif kind == "calendar":
+            visible_records = [
+                record for entries in grouped.values() for record in entries
+            ]
+    image_count = sum(len(record.get("images", [])) for record in visible_records)
+    image_records = []
+    remaining = 6
+    for record in visible_records:
+        if remaining and record.get("images"):
+            images = record["images"][:remaining]
+            image_records.append(
+                {
+                    "record_id": record["record_id"],
+                    "date": record_date(plan, record),
+                    "images": [
+                        {"image_id": identifier, "src": ""} for identifier in images
+                    ],
+                }
+            )
+            remaining -= len(images)
     blocks = []
     for block in plan["blocks"]:
         if not block.get("visible", True):
@@ -436,5 +477,7 @@ def build_view(
         "plan": plan,
         "view": view,
         "blocks": blocks,
+        "image_records": image_records,
+        "image_count": image_count,
         "supervised": plan.get("supervision", {}).get("active", False),
     }

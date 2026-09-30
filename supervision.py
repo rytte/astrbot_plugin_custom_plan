@@ -151,6 +151,7 @@ def proposal(plan: dict, params: dict, now: datetime) -> dict:
         "禁止删除计划或记录及普通撤销。打卡/累计记录按约定天数补录，不允许未来记录。"
         f"关键数据纠错须填写原因并留痕，只允许首次提交后{CORRECTION_MINUTES}分钟内；任务撤回完成以首次完成后{CORRECTION_MINUTES}分钟为限，纠错不刷新窗口。"
         "同一天打卡/累计数量增加属于正常进度。辅助内容可正常修改；待办视图不能替换原完成依据。"
+        "图片仅作附件，不自动认定达标；可以追加图片，移除或替换已有图片必须在原记录首次提交后的纠错窗口内填写原因并留痕，旧图保留。"
         f"仅创建者可申请退出，{EXIT_COOLDOWN_HOURS}小时后须再次确认，期间监督继续，可取消申请；重复申请不重置计时。"
         "固定期限按计划时区在结束日24:00结束，长期监督通过冷静期退出。"
     )
@@ -189,9 +190,8 @@ def enforce(
     rules = before["rules"]
     if rules["kind"] == "todo" and after["view"]["type"] == "todo":
         original_title = todo_title_field(before)
-        if (
-            after["view"].get("amount_field") != rules["amount_field"]
-            or (original_title and todo_title_field(after) != original_title)
+        if after["view"].get("amount_field") != rules["amount_field"] or (
+            original_title and todo_title_field(after) != original_title
         ):
             raise PlanError("监督期间待办视图必须使用原任务字段和完成依据。")
     old_records = {r["record_id"]: r for r in before["records"]}
@@ -214,6 +214,10 @@ def enforce(
                 if old["values"].get(key) != record["values"].get(key)
             }
         )
+        if old is not None and set(old.get("images", [])) - set(
+            record.get("images", [])
+        ):
+            changed.add("__images__")
         if rules["kind"] in {"checkin", "goal"} and (
             old is None or rules["date_field"] in changed
         ):
@@ -259,7 +263,7 @@ def enforce(
                 continue
         if action != "correct_records":
             raise PlanError(
-                "关键执行数据只能通过 correct 留痕纠错；普通 update 仅允许正常进度或辅助内容修改。"
+                "关键执行数据或已有凭证图片只能通过 correct 留痕纠错；普通 update 仅允许正常进度、追加图片或辅助内容修改。"
             )
         anchor = old["created_at"]
         if rules["kind"] == "todo" and changed == {rules["amount_field"]}:
@@ -271,7 +275,7 @@ def enforce(
             < timedelta(minutes=state["constraints"]["correction_minutes"])
         ):
             raise PlanError(
-                "已超过10分钟纠错窗口；可补充备注，关键数据须解除监督后修改。"
+                "已超过10分钟纠错窗口；可补充备注或追加图片，关键数据及已有凭证图片须解除监督后修改。"
             )
         text(reason, "纠错原因", 500, False)
         corrections.append(record["record_id"])

@@ -72,3 +72,7 @@ p { margin: 6px 0; overflow-wrap: anywhere; }
 .calendar-count, .agenda-date { color: var(--calendar-text); }
 .agenda-day { border-top: 1px solid var(--agenda-divider); }
 .agenda-label { border-left: 3px solid var(--agenda-accent); }
+.attachment-section { margin-top: 24px; border-top: 1px solid var(--record-divider); padding-top: 16px; }
+.attachment-record { margin-top: 12px; overflow-wrap: anywhere; }
+.attachment-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.attachment-thumb { width: 160px; height: 120px; object-fit: contain; border-radius: var(--radius-record); background: var(--surface-subtle); }

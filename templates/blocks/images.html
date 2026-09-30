@@ -1,0 +1,14 @@
+<div class="attachment-section">
+  <div class="section-head"><h3>{{ '今日附图' if view.type == 'checkin' else '记录附图' }}</h3><span class="muted">{{ image_count }} 张</span></div>
+  {% for record in image_records %}
+  <div class="attachment-record">
+    <div class="muted">{{ record.date }} · {{ record.record_id }}</div>
+    <div class="attachment-grid">
+    {% for image in record.images %}
+      {% if image.src %}<img class="attachment-thumb" src="{{ image.src }}" alt="记录附图">{% else %}<span class="muted">附图暂不可用</span>{% endif %}
+    {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+  <div class="pager">最多预览 6 张，可通过对话或 /plan images 计划ID 记录ID 查看保存图。</div>
+</div>
