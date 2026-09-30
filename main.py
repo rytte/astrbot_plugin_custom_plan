@@ -248,11 +248,11 @@ class CustomPlanPlugin(Star):
     async def custom_plan_records(
         self, event: AstrMessageEvent, operation: str, params: dict
     ) -> str:
-        """共用记录操作，支持打卡、累计目标、待办与通用记录。先查字段ID，不凭名称猜记录。补签用明确的历史日期，任务完成修改状态字段，完成时间由程序维护。一个批次原子提交，重复调用不重复写入。处理受监督计划时，若上下文缺少监督规则，先调用 custom_plan_supervision_rules(plan_id) 读取；规则仅适用于该计划。correct 是监督期间10分钟窗口内的留痕纠错，参数同 update，另需 reason:非空原因。
+        """共用记录操作，支持打卡、累计目标、待办与通用记录。先查字段ID，不凭名称猜记录。补签用明确的历史日期，任务完成修改绑定的数量字段：0表示待完成，大于0表示已完成，完成时间由程序维护。一个批次原子提交，重复调用不重复写入。处理受监督计划时，若上下文缺少监督规则，先调用 custom_plan_supervision_rules(plan_id) 读取；规则仅适用于该计划。correct 是监督期间10分钟窗口内的留痕纠错，参数同 update，另需 reason:非空原因。
 
         Args:
             operation(string): add、update、delete 或 correct。
-            params(object): 必须含plan_id、revision、records数组（1～50项）。add每项{values:{field_id:值}}；update每项{record_id,values:{field_id:新值}}；delete每项{record_id}。仅传要修改的字段，置空用null。日期YYYY-MM-DD；checkin默认当天数量1，goal必须提供数量，todo默认待完成。不能指定作者或completed_at。当前日期按查询返回的计划时区解释。
+            params(object): 必须含plan_id、revision、records数组（1～50项）。add每项{values:{field_id:值}}；update每项{record_id,values:{field_id:新值}}；delete每项{record_id}。仅传要修改的字段，置空用null。日期YYYY-MM-DD；checkin默认当天数量1，goal必须提供数量，todo默认数量0；todo数量非负，设为正数完成任务，设为0重新打开。不能指定作者或completed_at。当前日期按查询返回的计划时区解释。
         """
         if operation not in RECORD_ACTIONS:
             return encode(
@@ -266,13 +266,13 @@ class CustomPlanPlugin(Star):
     ) -> str:
         """配置字段、四种主视图、规则和动态区块，隐藏视图或删除区块不删除主记录。只有已注册类型可用。先查询当前配置；fields完整替换字段，遗漏字段会删除该列数据，需用户明确要求。处理受监督计划时，若上下文缺少监督规则，先调用 custom_plan_supervision_rules(plan_id) 读取；规则仅适用于该计划。
 
-        通用计划也可通过rules绑定已有字段：{kind:checkin,date_field,amount_field,threshold?,allow_backfill?,multiple_per_day?}；{kind:goal,date_field,amount_field,target}；{kind:todo,title_field,status_field,done_value,pending_value}。已有记录会按初始规则校验，必须先确认数据含义；已完成任务的完成时间记为绑定时刻。绑定后可切换视图，首版不支持直接互换已绑定的业务类型。
+        通用计划也可通过rules绑定已有字段：{kind:checkin,date_field,amount_field,threshold?,allow_backfill?,multiple_per_day?}；{kind:goal,date_field,amount_field,target}；{kind:todo,title_field,amount_field}。普通待办按单条数量0为待完成、大于0为已完成；打卡列表仍按每日数量合计与阈值判定。已有记录会按初始规则校验，必须先确认数据含义；已完成任务的完成时间记为绑定时刻。绑定后可切换视图，首版不支持直接互换已绑定的业务类型。
 
         用户要求切换视图时先仅提交 type，缺项按工具错误澄清，不凭预设或监督状态直接拒绝。视图切换不改变业务规则；监督期间允许调整视图和新增非必填辅助字段，不能替换执行依据。
 
         Args:
             operation(string): fields、view、rules、block_add、block_update、block_delete 或 block_order。
-            params(object): 总是含plan_id、revision。fields加fields:[{field_id,name,type:text/number/date/status,required?:bool,unit?:string,options?:状态值数组}]，改名保留ID。view加type?:table/checkin/todo/calendar、visible?、fields?:展示字段ID数组、date_field?、amount_field?、title_field?、status_field?、done_value?、sort_field?、descending?、filters?；所需字段绑定以工具校验为准。rules: checkin可设threshold+effective_from（今天起）、allow_backfill、multiple_per_day；goal可设target。block_add加type:notes/statistics,title?,visible?,config；notes配置{text}；statistics配置{operation:count/sum/average/min/max,field_id?:数值字段,filters?,target?}，默认统计全量，独立于主视图分页与筛选。block_update加block_id及title?/visible?/config?（完整替换config）；block_delete加block_id；block_order加全部block_ids数组。
+            params(object): 总是含plan_id、revision。fields加fields:[{field_id,name,type:text/number/date,required?:bool,unit?:string}]，改名保留ID。view加type?:table/checkin/todo/calendar、visible?、fields?:展示字段ID数组、date_field?、amount_field?、title_field?、sort_field?、descending?、filters?；普通待办需title_field和数值类型amount_field，所需字段绑定以工具校验为准。rules: checkin可设threshold+effective_from（今天起）、allow_backfill、multiple_per_day；goal可设target。block_add加type:notes/statistics,title?,visible?,config；notes配置{text}；statistics配置{operation:count/sum/average/min/max,field_id?:数值字段,filters?,target?}，默认统计全量，独立于主视图分页与筛选。block_update加block_id及title?/visible?/config?（完整替换config）；block_delete加block_id；block_order加全部block_ids数组。
         """
         if operation not in CONFIGURE_ACTIONS:
             return encode({"ok": False, "error": "不支持的配置操作。"})

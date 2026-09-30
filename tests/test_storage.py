@@ -98,7 +98,7 @@ async def test_layout_migration_covers_deleted_plans_and_undo_and_runs_once(stor
     await upgraded.initialize()
     assert await upgraded.snapshot(pid, OWNER, include_deleted=True) == before
     with sqlite3.connect(storage.path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
         assert all(
             json.loads(row[0])["render_layout"] == "mobile"
             for row in connection.execute(
@@ -157,11 +157,11 @@ async def test_layout_migration_is_atomic_and_preserves_explicit_layout(storage)
 
 async def test_future_database_version_is_not_downgraded(storage):
     with sqlite3.connect(storage.path) as connection:
-        connection.execute("PRAGMA user_version=5")
+        connection.execute("PRAGMA user_version=6")
     with pytest.raises(PlanError, match="数据库版本"):
         await storage.initialize()
     with sqlite3.connect(storage.path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 async def test_deleted_plans_are_purged_after_configured_retention(storage):
@@ -447,7 +447,7 @@ async def test_task_completion_reopen_and_immutable_author(storage):
     await storage.mutate(
         OWNER,
         "update_records",
-        {"records": [{"record_id": rid, "values": {"status": "已完成"}}]},
+        {"records": [{"record_id": rid, "values": {"amount": 1}}]},
         pid,
         2,
         "done",
@@ -468,7 +468,7 @@ async def test_task_completion_reopen_and_immutable_author(storage):
     await storage.mutate(
         OWNER,
         "update_records",
-        {"records": [{"record_id": rid, "values": {"status": "待完成"}}]},
+        {"records": [{"record_id": rid, "values": {"amount": 0}}]},
         pid,
         4,
         "reopen",
@@ -552,22 +552,12 @@ async def test_generic_plan_binds_existing_data_without_copy(storage, kind):
         {"field_id": "d", "name": "日期", "type": "date"},
         {"field_id": "n", "name": "数量", "type": "number"},
         {"field_id": "t", "name": "标题", "type": "text"},
-        {
-            "field_id": "s",
-            "name": "状态",
-            "type": "status",
-            "options": ["待完成", "已完成"],
-        },
     ]
     await storage.mutate(OWNER, "fields", {"fields": fields}, pid, 1, "fields")
     added = await storage.mutate(
         OWNER,
         "add_records",
-        {
-            "records": [
-                {"values": {"d": "2026-09-01", "n": 1, "t": "学习", "s": "已完成"}}
-            ]
-        },
+        {"records": [{"values": {"d": "2026-09-01", "n": 1, "t": "学习"}}]},
         pid,
         2,
         "record",
@@ -576,9 +566,7 @@ async def test_generic_plan_binds_existing_data_without_copy(storage, kind):
         {
             "kind": kind,
             "title_field": "t",
-            "status_field": "s",
-            "done_value": "已完成",
-            "pending_value": "待完成",
+            "amount_field": "n",
         }
         if kind == "todo"
         else {"kind": kind, "date_field": "d", "amount_field": "n"}

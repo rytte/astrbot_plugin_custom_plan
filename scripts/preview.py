@@ -89,7 +89,7 @@ async def main():
                     {
                         "values": {
                             "title": title,
-                            "status": "已完成" if index < 2 else "待完成",
+                            "amount": 1 if index < 2 else 0,
                             "due": (current + timedelta(days=index - 1)).isoformat(),
                         }
                     }

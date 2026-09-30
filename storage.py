@@ -42,6 +42,79 @@ def encode(value) -> str:
     )
 
 
+def migrate_status_fields(
+    document: dict, completion_sources: dict | None = None
+) -> bool:
+    definitions = {item["field_id"]: item for item in document["fields"]}
+    original = deepcopy(definitions)
+    sources = {
+        source: done
+        for source, done in (completion_sources or {}).items()
+        if source in definitions
+        and definitions[source]["type"] == "status"
+        and done in definitions[source].get("options", [])
+    }
+    configured_sources = {}
+    changed = False
+    rules = document.get("rules", {})
+    view = document.get("view", {})
+    for config in (rules, view):
+        source = config.get("status_field")
+        done = config.get("done_value", sources.get(source))
+        if source and done is not None:
+            if source in configured_sources and configured_sources[source] != done:
+                raise PlanError("旧待办的业务规则与视图完成值冲突，无法安全迁移。")
+            configured_sources[source] = done
+            sources[source] = done
+            config["amount_field"] = source
+        elif source and (config is rules or view.get("type") == "todo"):
+            raise PlanError("旧待办缺少完成值，无法安全迁移。")
+        for key in ("status_field", "done_value", "pending_value"):
+            if key in config:
+                config.pop(key)
+                changed = True
+    for source, done in sources.items():
+        definition = definitions.get(source)
+        if (
+            definition is None
+            or definition["type"] != "status"
+            or not isinstance(definition.get("options"), list)
+            or done not in definition.get("options", [])
+        ):
+            raise PlanError("旧待办的状态字段或完成值无效，无法安全迁移。")
+    for definition in document["fields"]:
+        if definition["type"] == "status":
+            if definition["field_id"] in sources:
+                definition["type"] = "number"
+                if definition["name"] == "状态":
+                    definition["name"] = "数量"
+            else:
+                definition["type"] = "text"
+            changed = True
+        if "options" in definition:
+            definition.pop("options")
+            changed = True
+    for record in document.get("records", []):
+        for source, done in sources.items():
+            value = record["values"].get(source)
+            definition = original[source]
+            if (value is None and definition.get("required")) or (
+                value is not None and value not in definition["options"]
+            ):
+                raise PlanError("旧待办记录的状态值无效，无法安全迁移。")
+            record["values"][source] = int(value == done)
+    configs = [view] + [block["config"] for block in document.get("blocks", [])]
+    for config in configs:
+        equals = config.get("filters", {}).get("equals", {})
+        for source, done in sources.items():
+            if source in equals:
+                value = equals[source]
+                if value is not None and value not in original[source]["options"]:
+                    raise PlanError("旧状态筛选值无效，无法安全迁移。")
+                equals[source] = int(value == done)
+    return changed
+
+
 class Storage:
     """Keep one bounded JSON dataset per plan and short undo history.
 
@@ -92,9 +165,9 @@ class Storage:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4):
-                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 4。")
-            if version == 4:
+            if version not in (0, 1, 2, 3, 4, 5):
+                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 5。")
+            if version == 5:
                 self._purge_expired_deleted(connection)
                 return
             if version == 0:
@@ -146,7 +219,9 @@ class Storage:
                 "CREATE INDEX IF NOT EXISTS supervision_log_plan ON supervision_log(plan_id, id)",
             ):
                 connection.execute(statement)
-            connection.execute("PRAGMA user_version=4")
+            if version:
+                self._migrate_status_fields(connection)
+            connection.execute("PRAGMA user_version=5")
             self._purge_expired_deleted(connection)
 
     @staticmethod
@@ -376,6 +451,50 @@ class Storage:
             connection.execute("DELETE FROM requests WHERE plan_id=?", (plan_id,))
             connection.execute("DELETE FROM changes WHERE plan_id=?", (plan_id,))
             connection.execute("DELETE FROM plans WHERE plan_id=?", (plan_id,))
+
+    @staticmethod
+    def _migrate_status_fields(connection) -> None:
+        changed_plans = set()
+        completion_sources = {}
+        for table, column in (("plans", "document"), ("changes", "previous")):
+            rows = connection.execute(
+                f"SELECT rowid, plan_id, {column} FROM {table} WHERE {column} IS NOT NULL"
+            ).fetchall()
+            for row in rows:
+                document = json.loads(row[column])
+                if table == "plans":
+                    completion_sources[row["plan_id"]] = {
+                        config["status_field"]: config["done_value"]
+                        for config in (document["rules"], document["view"])
+                        if config.get("status_field") and "done_value" in config
+                    }
+                if migrate_status_fields(document):
+                    validate_plan(document)
+                    connection.execute(
+                        f"UPDATE {table} SET {column}=? WHERE rowid=?",
+                        (encode(document), row["rowid"]),
+                    )
+                    changed_plans.add(row["plan_id"])
+        for row in connection.execute(
+            "SELECT plan_id, document FROM supervision"
+        ).fetchall():
+            state = json.loads(row["document"])
+            if migrate_status_fields(
+                state["constraints"], completion_sources.get(row["plan_id"])
+            ):
+                state["rules_text"] += (
+                    "\n\n字段格式升级说明：原待办状态改为数值完成依据，原完成值对应 1，"
+                    "其余对应 0；未绑定完成依据的状态字段保留为文本。执行要求和监督窗口不变。"
+                )
+                connection.execute(
+                    "UPDATE supervision SET document=? WHERE plan_id=?",
+                    (encode(state), row["plan_id"]),
+                )
+                changed_plans.add(row["plan_id"])
+        connection.executemany(
+            "DELETE FROM supervision_previews WHERE plan_id=?",
+            [(plan_id,) for plan_id in changed_plans],
+        )
 
     @staticmethod
     def _migrate_appearance(connection, version: int) -> None:

@@ -189,7 +189,7 @@ async def test_v2_theme_migration_preserves_desktop_deleted_plans_and_undo(
     await upgraded.initialize()
     assert await upgraded.snapshot(pid, OWNER, include_deleted=True) == before
     with sqlite3.connect(storage.path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
         assert all(
             json.loads(row[0])["render_theme"] == "forest"
             for row in connection.execute(
@@ -267,7 +267,9 @@ async def test_registered_theme_renders_all_views_and_layouts_without_leaking(
             ("calendar", "todo"),
         ):
             plan = create_plan(
-                OWNER, {"name": "主题扩展验证", "preset": preset}, "Asia/Shanghai"
+                OWNER,
+                {"name": "主题扩展验证", "preset": preset, "render_theme": "forest"},
+                "Asia/Shanghai",
             )
             apply_change(plan, "view", {"type": kind}, OWNER)
             apply_change(

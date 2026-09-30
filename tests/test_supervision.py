@@ -339,7 +339,7 @@ async def test_todo_completion_corrections_do_not_refresh_window(storage, clock)
         storage,
         pid,
         "update_records",
-        {"records": [{"record_id": record, "values": {"status": "已完成"}}]},
+        {"records": [{"record_id": record, "values": {"amount": 1}}]},
     )
     clock.now += timedelta(minutes=5)
     await change(
@@ -347,7 +347,7 @@ async def test_todo_completion_corrections_do_not_refresh_window(storage, clock)
         pid,
         "correct_records",
         {
-            "records": [{"record_id": record, "values": {"status": "待完成"}}],
+            "records": [{"record_id": record, "values": {"amount": 0}}],
             "reason": "点错状态",
         },
     )
@@ -355,7 +355,7 @@ async def test_todo_completion_corrections_do_not_refresh_window(storage, clock)
         storage,
         pid,
         "update_records",
-        {"records": [{"record_id": record, "values": {"status": "已完成"}}]},
+        {"records": [{"record_id": record, "values": {"amount": 1}}]},
     )
     clock.now += timedelta(minutes=5)
     before = await storage.snapshot(pid, OWNER)
@@ -366,8 +366,8 @@ async def test_todo_completion_corrections_do_not_refresh_window(storage, clock)
             "update_records",
             {
                 "records": [
-                    {"record_id": record, "values": {"status": "待完成"}},
-                    {"record_id": record, "values": {"status": "已完成"}},
+                    {"record_id": record, "values": {"amount": 0}},
+                    {"record_id": record, "values": {"amount": 1}},
                 ]
             },
         )
@@ -378,7 +378,7 @@ async def test_todo_completion_corrections_do_not_refresh_window(storage, clock)
             pid,
             "correct_records",
             {
-                "records": [{"record_id": record, "values": {"status": "待完成"}}],
+                "records": [{"record_id": record, "values": {"amount": 0}}],
                 "reason": "不能刷新",
             },
         )
@@ -544,7 +544,7 @@ async def test_v3_upgrade_preserves_documents_and_undo_history(storage):
     with sqlite3.connect(storage.path) as connection:
         assert connection.execute("SELECT * FROM plans").fetchall() == documents
         assert connection.execute("SELECT * FROM changes").fetchall() == changes
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
     assert (await storage.query(OWNER, {"plan_id": pid}))["supervision"][
         "status"
     ] == "off"
@@ -623,10 +623,9 @@ async def test_supervised_view_cannot_substitute_completion_criteria(storage, cl
     fields = (await storage.query(OWNER, {"plan_id": pid}))["fields"]
     fields.append(
         {
-            "field_id": "extra_status",
-            "name": "辅助状态",
-            "type": "status",
-            "options": ["是", "否"],
+            "field_id": "extra_amount",
+            "name": "辅助数量",
+            "type": "number",
         }
     )
     await change(storage, pid, "fields", {"fields": fields})
@@ -635,7 +634,7 @@ async def test_supervised_view_cannot_substitute_completion_criteria(storage, cl
             storage,
             pid,
             "view",
-            {"type": "todo", "status_field": "extra_status", "done_value": "是"},
+            {"type": "todo", "amount_field": "extra_amount"},
         )
     await change(storage, pid, "view", {"type": "todo"})
 
@@ -659,10 +658,9 @@ async def test_supervised_checkin_can_change_view_without_new_completion_state(
     fields = deepcopy(after["fields"])
     fields.append(
         {
-            "field_id": "aux_status",
-            "name": "辅助状态",
-            "type": "status",
-            "options": ["已完成", "待完成"],
+            "field_id": "aux_amount",
+            "name": "辅助数量",
+            "type": "number",
         }
     )
     await change(storage, pid, "fields", {"fields": fields})
@@ -670,14 +668,12 @@ async def test_supervised_checkin_can_change_view_without_new_completion_state(
         storage,
         pid,
         "update_records",
-        {"records": [{"record_id": rid, "values": {"aux_status": "已完成"}}]},
+        {"records": [{"record_id": rid, "values": {"aux_amount": 1}}]},
     )
     after = await storage.snapshot(pid, OWNER)
     assert not build_view(after, {}, OWNER.user)["view"]["rows"][0]["done"]
-    with pytest.raises(PlanError, match="不能指定独立"):
-        await change(
-            storage, pid, "view", {"status_field": "aux_status", "done_value": "已完成"}
-        )
+    with pytest.raises(PlanError, match="原打卡日期和数量"):
+        await change(storage, pid, "view", {"amount_field": "aux_amount"})
     assert (await storage.snapshot(pid, OWNER)) == after
     await change(
         storage,

@@ -15,6 +15,7 @@ from .domain import (
     object_keys,
     select_records,
     today,
+    todo_done,
     validate_render_layout,
 )
 
@@ -86,7 +87,6 @@ def checkin_todo_rows(plan: dict, records: list[dict], actor_user: str) -> list[
             **details,
             "date": day,
             "title": f"{day} · {plan['name']}",
-            "status": "已达标" if details["done"] else "未达标",
             "unit": unit,
             "notes": notes[day],
         }
@@ -149,9 +149,7 @@ def build_view(
     elif kind == "todo" and not checkin_list:
         records = sorted(
             records,
-            key=lambda r: (
-                r["values"].get(config["status_field"]) == config["done_value"]
-            ),
+            key=lambda record: todo_done(record, config["amount_field"]),
         )
     current_day = today(plan)
     daily_rows = checkin_todo_rows(plan, records, actor_user) if checkin_list else []
@@ -204,20 +202,18 @@ def build_view(
     elif kind == "todo":
         view.update(
             completed=sum(
-                r["values"].get(config["status_field"]) == config["done_value"]
-                for r in records
+                todo_done(record, config["amount_field"]) for record in records
             ),
             rows=[
                 {
-                    "title": r["values"].get(config["title_field"]) or "未命名任务",
-                    "done": r["values"].get(config["status_field"])
-                    == config["done_value"],
-                    "status": r["values"].get(config["status_field"]) or "未设置状态",
-                    "due": r["values"].get(config.get("date_field")),
-                    "completed_at": r["completed_at"],
-                    "record_id": r["record_id"],
+                    "title": record["values"].get(config["title_field"])
+                    or "未命名任务",
+                    "done": todo_done(record, config["amount_field"]),
+                    "due": record["values"].get(config.get("date_field")),
+                    "completed_at": record["completed_at"],
+                    "record_id": record["record_id"],
                 }
-                for r in records[(page - 1) * size : page * size]
+                for record in records[(page - 1) * size : page * size]
             ],
         )
     elif kind == "checkin":

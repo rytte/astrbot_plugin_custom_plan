@@ -82,7 +82,7 @@ def proposal(plan: dict, params: dict, now: datetime) -> dict:
     rules = plan["rules"]
     critical = {
         rules[key]
-        for key in ("date_field", "amount_field", "title_field", "status_field")
+        for key in ("date_field", "amount_field", "title_field")
         if key in rules
     }
     if rules["kind"] == "todo" and plan["view"].get("date_field"):
@@ -176,7 +176,7 @@ def enforce(
     if rules["kind"] == "todo" and after["view"]["type"] == "todo":
         if any(
             after["view"].get(key) != rules[key]
-            for key in ("title_field", "status_field", "done_value")
+            for key in ("title_field", "amount_field")
         ):
             raise PlanError("监督期间待办视图必须使用原任务字段和完成依据。")
     old_records = {r["record_id"]: r for r in before["records"]}
@@ -189,7 +189,7 @@ def enforce(
             and record["completed_at"]
             and old["completed_at"] != record["completed_at"]
         ):
-            raise PlanError("不能通过批量切换状态刷新任务完成时间。")
+            raise PlanError("不能通过批量修改数量刷新任务完成时间。")
         changed = (
             set()
             if old is None
@@ -219,15 +219,14 @@ def enforce(
                 )
             continue
         if rules["kind"] == "todo":
-            status = rules["status_field"]
+            amount = rules["amount_field"]
             if old["completed_at"]:
                 state["completion_anchors"].setdefault(
                     record["record_id"], old["completed_at"]
                 )
             if (
-                changed == {status}
-                and old["values"][status] != rules["done_value"]
-                and record["values"][status] == rules["done_value"]
+                changed == {amount}
+                and record["values"][amount] > old["values"][amount]
                 and action != "correct_records"
             ):
                 state["completion_anchors"].setdefault(
@@ -248,7 +247,7 @@ def enforce(
                 "关键执行数据只能通过 correct 留痕纠错；普通 update 仅允许正常进度或辅助内容修改。"
             )
         anchor = old["created_at"]
-        if rules["kind"] == "todo" and changed == {rules["status_field"]}:
+        if rules["kind"] == "todo" and changed == {rules["amount_field"]}:
             anchor = state["completion_anchors"].get(record["record_id"], anchor)
         elapsed = now - datetime.fromisoformat(anchor)
         if (
