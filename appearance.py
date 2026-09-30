@@ -21,7 +21,7 @@ LAYOUTS = {
     "mobile": Layout(640, 8, "layouts/mobile.css", "mobile/"),
     "desktop": Layout(1000, 20, "layouts/desktop.css", ""),
 }
-DEFAULT_THEME = "forest"
+DEFAULT_THEME = "midnight"
 THEMES = {
     "forest": Theme("清新绿", "themes/forest.css"),
     "midnight": Theme("深色", "themes/midnight.css"),

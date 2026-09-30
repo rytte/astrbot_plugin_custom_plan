@@ -234,7 +234,9 @@ async def test_midnight_switch_restart_render_and_undo_through_tools(
 
     created = json.loads(
         await plugin.custom_plan_manage(
-            Event(message="create"), "create", {"name": "主题切换", "preset": "todo"}
+            Event(message="create"),
+            "create",
+            {"name": "主题切换", "preset": "todo", "render_theme": "forest"},
         )
     )
     assert created["ok"]

@@ -64,7 +64,10 @@ async def test_layout_migration_covers_deleted_plans_and_undo_and_runs_once(stor
     from astrbot_plugin_custom_plan.storage import Storage
 
     created = await storage.mutate(
-        OWNER, "create", {"name": "历史计划", "preset": "todo"}, message_key="c"
+        OWNER,
+        "create",
+        {"name": "历史计划", "preset": "todo", "render_theme": "forest"},
+        message_key="c",
     )
     pid = created["plan_id"]
     await storage.mutate(

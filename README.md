@@ -60,14 +60,14 @@ python -m playwright install --with-deps chromium
 插件配置 `default_render_layout` 决定**创建计划时**的初始样式，默认 `mobile`。创建时会把选定样式写入 SQLite 中该计划文档的 `render_layout` 字段；以后发送图片直接使用该字段。调整插件配置只影响之后创建的计划，不会改变已有计划。
 插件配置 `deleted_retention_days` 控制软删除计划的保留期，默认 7 天，范围为 1～3650 天。超过保留期的计划会在插件启动或下一次查询/写入时永久清理。
 
-主题独立保存为 `render_theme`，创建时取插件配置 `default_render_theme`，默认 `forest`（清新绿）。同一主题可用于移动版和桌面版，也适用于表格、打卡、待办、日历、统计和随笔。更改主题不改变布局、分页或记录内容，更改全局默认主题不影响已有计划。
+主题独立保存为 `render_theme`，创建时取插件配置 `default_render_theme`，默认 `midnight`（深色）。同一主题可用于移动版和桌面版，也适用于表格、打卡、待办、日历、统计和随笔。更改主题不改变布局、分页或记录内容，更改全局默认主题不影响已有计划。
 
 | 主题 ID | 名称 | 外观 |
 | --- | --- | --- |
-| `forest` | 清新绿（默认） | 浅绿背景、白色卡片、绿色强调 |
-| `midnight` | 深色 | 深蓝背景、分层暗色卡片、浅蓝强调；达标使用薄荷绿，未达标使用琥珀色 |
+| `forest` | 清新绿 | 浅绿背景、白色卡片、绿色强调 |
+| `midnight` | 深色（默认） | 深蓝背景、分层暗色卡片、浅蓝强调；达标使用薄荷绿，未达标使用琥珀色 |
 
-可以直接对话：“把这个计划切换为深色主题”，或“把这个计划换回清新绿”。希望新计划默认使用深色时，将插件配置 `default_render_theme` 设为 `midnight` 后重载；已有计划仍使用自己保存的主题。图片采用生成时指定的主题，不随设备深色模式自动切换。
+可以直接对话：“把这个计划切换为深色主题”，或“把这个计划换回清新绿”。新计划默认使用深色；如果已有插件配置保存为 `forest`，需将 `default_render_theme` 改为 `midnight` 后重载，已有计划仍使用自己保存的主题。图片采用生成时指定的主题，不随设备深色模式自动切换。
 
 | 样式 | 图片排版 | 表格 / 待办的默认每页记录数 |
 | --- | --- | --- |
@@ -255,6 +255,6 @@ python -m ruff format --check .
 
 预览脚本增加 `--supervised` 可生成带盾牌的看板示例，存入对应主题与布局下的 `supervised/` 子目录，不修改任何实际计划。
 
-使用 `python scripts/preview.py --theme forest --layout mobile --browser "浏览器可执行文件路径"` 可生成四种视图的示例图片，保存到 `dist/previews/forest/mobile/`，并输出冷启动与复用浏览器后的耗时；`--layout desktop` 生成桌面版并保存到 `dist/previews/forest/desktop/`。`--theme` 接受已注册的主题 ID，省略时使用 `forest`。已安装 Playwright Chromium 时可省略 `--browser`。使用 `python scripts/package.py` 生成可导入的 ZIP，排除虚拟环境、测试数据和示例图片。
+使用 `python scripts/preview.py --theme forest --layout mobile --browser "浏览器可执行文件路径"` 可生成四种视图的示例图片，保存到 `dist/previews/forest/mobile/`，并输出冷启动与复用浏览器后的耗时；`--layout desktop` 生成桌面版并保存到 `dist/previews/forest/desktop/`。`--theme` 接受已注册的主题 ID，省略时使用 `midnight`。已安装 Playwright Chromium 时可省略 `--browser`。使用 `python scripts/package.py` 生成可导入的 ZIP，排除虚拟环境、测试数据和示例图片。
 
 深色预览使用 `--theme midnight`，例如 `python scripts/preview.py --theme midnight --layout mobile`，输出到 `dist/previews/midnight/mobile/`。

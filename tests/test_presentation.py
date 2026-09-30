@@ -14,6 +14,23 @@ from astrbot_plugin_custom_plan.renderer import LocalRenderer
 OWNER = Actor("qq", "owner")
 
 
+@pytest.mark.parametrize("layout", ["mobile", "desktop"])
+def test_renderer_footer_shows_updated_time_before_generated_time(
+    tmp_path, monkeypatch, layout
+):
+    plan = create_plan(
+        OWNER, {"name": "时间顺序", "render_layout": layout}, "Asia/Shanghai"
+    )
+    plan["updated_at"] = "2026-09-29T01:02:00+00:00"
+    monkeypatch.setattr(
+        "astrbot_plugin_custom_plan.renderer.now_iso",
+        lambda: "2026-09-30T03:04:00+00:00",
+    )
+    html = LocalRenderer(tmp_path, {}).html(plan, {}, OWNER.user)
+    footer = html.split('<footer class="footer">', 1)[1].split("</footer>", 1)[0]
+    assert "更新：2026-09-29 09:02 · 生成：2026-09-30 11:04" in footer
+
+
 @pytest.mark.parametrize(
     "kind,preset",
     [
@@ -204,7 +221,7 @@ def test_layout_controls_default_paging_but_explicit_options_win(tmp_path):
         assert len(view["rows"]) == size and view["pages"] == pages
         assert len(build_view(plan, {"page_size": 3}, OWNER.user)["view"]["rows"]) == 3
         html = renderer.html(plan, options, OWNER.user)
-        assert f'<body class="{layout}" data-theme="forest">' in html
+        assert f'<body class="{layout}" data-theme="midnight">' in html
         if layout == "mobile":
             assert "记录 9" in html and "记录 17" not in html
         assert options == {"page": 2}

@@ -5,7 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-from astrbot_plugin_custom_plan.appearance import LAYOUTS, THEMES, Theme
+from astrbot_plugin_custom_plan.appearance import DEFAULT_THEME, LAYOUTS, THEMES, Theme
 from astrbot_plugin_custom_plan.domain import (
     Actor,
     PlanError,
@@ -17,6 +17,22 @@ from astrbot_plugin_custom_plan.storage import Storage
 
 OWNER = Actor("qq-1", "owner")
 ASSETS = Path(__file__).parents[1] / "assets"
+
+
+async def test_default_theme_is_midnight_in_config_creation_and_storage(storage):
+    schema = json.loads(
+        (ASSETS.parent / "_conf_schema.json").read_text(encoding="utf-8")
+    )
+    assert DEFAULT_THEME == schema["default_render_theme"]["default"] == "midnight"
+    plan = create_plan(OWNER, {"name": "默认主题"}, "Asia/Shanghai")
+    assert plan["render_theme"] == "midnight"
+    created = await storage.mutate(
+        OWNER, "create", {"name": "默认主题"}, message_key="default"
+    )
+    assert created["render_theme"] == "midnight"
+    saved = await storage.snapshot(created["plan_id"], OWNER)
+    assert saved["render_theme"] == "midnight"
+    assert (await storage.query(OWNER, {}))["default_render_theme"] == "midnight"
 
 
 @pytest.fixture
@@ -49,7 +65,10 @@ async def test_theme_is_persisted_and_independent_of_layout_and_global_default(
     storage, extra_theme, selected_theme
 ):
     created = await storage.mutate(
-        OWNER, "create", {"name": "现有计划", "preset": "todo"}, message_key="c"
+        OWNER,
+        "create",
+        {"name": "现有计划", "preset": "todo", "render_theme": "forest"},
+        message_key="c",
     )
     pid = created["plan_id"]
     initial = await storage.snapshot(pid, OWNER)
@@ -129,7 +148,7 @@ async def test_unknown_themes_fail_without_fallback_or_writes(storage, tmp_path,
     with pytest.raises(PlanError, match="render_theme"):
         await storage.mutate(OWNER, "update", {"render_theme": value}, pid, 1, "bad-u")
     snapshot = await storage.snapshot(pid, OWNER)
-    assert snapshot["revision"] == 1 and snapshot["render_theme"] == "forest"
+    assert snapshot["revision"] == 1 and snapshot["render_theme"] == "midnight"
     snapshot["render_theme"] = value
     with pytest.raises(PlanError, match="render_theme"):
         LocalRenderer(tmp_path, {}).html(snapshot, {}, OWNER.user)
@@ -144,7 +163,11 @@ async def test_v2_theme_migration_preserves_desktop_deleted_plans_and_undo(
     created = await storage.mutate(
         OWNER,
         "create",
-        {"name": "历史桌面计划", "render_layout": "desktop"},
+        {
+            "name": "历史桌面计划",
+            "render_layout": "desktop",
+            "render_theme": "forest",
+        },
         message_key="c",
     )
     pid = created["plan_id"]
