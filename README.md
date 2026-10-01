@@ -59,22 +59,22 @@ python -m playwright install --with-deps chromium
 
 ## 记录附图
 
-可以发送图片并明确说“把这张图存到今天的打卡里”，或“给这条记录补上这两张图片”。只有显式执行附图操作才保存图片，不会自动收集聊天图片。首版仅接受**当前消息直接包含的图片**，不读取引用消息、历史消息或模型提供的网址、路径、Base64。
+可以发送图片并明确说“把这张图存到今天的打卡里”，或“给这条记录补上这两张图片”。只有显式执行附图操作才保存图片，不会自动收集聊天图片。写入接口直接读取传入的图片来源（本地绝对路径、公共 HTTP/HTTPS 地址或 Base64/data URI），不额外缓存；如果来源已经失效，保存时会报错。
 
 附图是记录元数据，不是新的字段类型，不参与统计或自动达标判断。支持 JPEG、PNG、静态 WebP；默认每条记录最多 3 张，每张最大 10 MB、2000 万像素。处理后保存为 WebP 高清图并生成缩略图，校正拍摄方向、去除 EXIF 等元信息；**不保留原始文件，保存图不保证无损**。动画、SVG 和 GIF 不支持。保存和查看附图不依赖浏览器服务。
 
 主视图看板显示当前展示范围的附图预览，最多 6 张：表格和待办跟随分页、筛选；打卡仅显示统计对象今天的附图；日历显示所选月份的附图。可通过对话或 `/plan images 计划ID 记录ID` 单独发送高清保存图。缺少缩略图会显示提示，不影响其他数据展示。
 
-查询返回记录的 `images` ID 数组、`image_metadata`（作者、大小、尺寸、上传时间）、`image_limits`、本计划已占用的 `image_storage_bytes`，不会返回本地路径或图片内容。`message_images` 列出当前消息的图片序号，从 1 开始。记录工具的 `add`、`update`、`correct` 每项可提供 `images:{add:[消息图片序号],remove:[已有图片ID]}`；`add` 不传 `remove`。仅修改附图时 `values` 传 `{}`。例如，在消息同时附上图片时执行：
+查询返回记录的 `images` ID 数组、`image_metadata`（作者、大小、尺寸、上传时间）、`image_limits`、本计划已占用的 `image_storage_bytes`，不会返回本地路径或图片内容。记录工具的 `add`、`update`、`correct` 每项可提供 `images:{add:[图片来源],remove:[已有图片ID]}`；`add` 不传 `remove`。`add` 中也兼容当前消息图片序号（从 1 开始）。仅修改附图时 `values` 传 `{}`。例如：
 
 ```text
-/plan exec add_records {"plan_id":"p_实际ID","revision":1,"records":[{"values":{},"images":{"add":[1]}}]}
+/plan exec add_records {"plan_id":"p_实际ID","revision":1,"records":[{"values":{},"images":{"add":["https://example.com/steps.png"]}}]}
 /plan exec update_records {"plan_id":"p_实际ID","revision":2,"records":[{"record_id":"r_实际ID","values":{},"images":{"remove":["img_实际ID"]}}]}
 ```
 
-上述新增示例适用于打卡或已配置好字段的通用计划；累计计划仍须填写数量，待办仍须填写标题等必填业务字段。可以对一个批次的多条记录关联同一张当前消息图片，只保存一份文件。每次操作最多读取 10 张、合计 50 MB，处理队列和等待时间有上限；失败不提交任何记录，重试同一消息的相同操作不会重复保存。
+上述新增示例适用于打卡或已配置好字段的通用计划；累计计划仍须填写数量，待办仍须填写标题等必填业务字段。可以对一个批次的多条记录关联同一图片来源，只保存一份文件。每次操作最多读取 10 张、合计 50 MB，处理队列和等待时间有上限；失败不提交任何记录，重试同一消息的相同操作不会重复保存。
 
-附图继承计划的读写权限，不提供公开直链。消息中的远程图片只允许公共 HTTP/HTTPS 地址和标准端口，下载时检查实际 DNS 地址、拒绝内网/保留地址、重定向及额外压缩，并限制响应大小和超时；平台返回内网链接时需重新发送为可读取的消息图片。模型不能直接指定下载来源。
+附图继承计划的读写权限，不提供公开直链。远程图片只允许公共 HTTP/HTTPS 地址和标准端口，下载时检查实际 DNS 地址、拒绝内网/保留地址、重定向及额外压缩，并限制响应大小和超时。
 
 图片存放于插件数据目录的 `media/`，SQLite 的 `media` 表保存索引；不要把该目录当作看板截图缓存删除。备份、迁移时应在暂停写入后**同时备份 `plans.sqlite3` 和 `media/`**。默认单计划图片额度 100 MB、插件总额度 1024 MB，高清图、缩略图、历史图及等待回收的文件均计入额度。配置 `images_per_record`、`image_max_mb`、`image_max_pixels`、`image_plan_quota_mb`、`image_total_quota_mb` 可调整上限，调小上限不主动删除已有图。
 
@@ -86,7 +86,7 @@ python -m playwright install --with-deps chromium
 
 计划可以保存参考图，例如截图格式样例、目标数据、动作示范或用户确认的核对标准。参考资料不是某次打卡的凭证，也不是看板背景；记录凭证仍通过记录附图保存。只在用户明确要求时保存、替换或删除图片，用途不清楚时先询问。
 
-- 参考资料增删改统一使用 `custom_plan_manage` 的 `reference_add / reference_update / reference_delete`，不再单独注册参考资料工具。新增需当前消息 `image_index` 与 `purpose`；每份资料包含一张去元信息、无损保存的图片，可附 `title`、`checks`、`as_basis`。
+- 参考资料增删改统一使用 `custom_plan_manage` 的 `reference_add / reference_update / reference_delete`，不再单独注册参考资料工具。新增需 `image_source` 与 `purpose`；仍兼容用 `image_index` 指定当前消息图片。每份资料包含一张去元信息、无损保存的图片，可附 `title`、`checks`、`as_basis`。
 - `checks` 只能保存用户明确确认的文字核对项，模型读图建议不能直接采用。`as_basis` 默认 `false`，只有用户明确确认用途与核对项后才设为 `true`。开启监督时，这些参考依据及执行标准会冻结；监督期间不能替换或删除依据，也不能修改用途与核对项，辅助参考资料仍可调整。
 - `custom_plan_query` 返回参考资料摘要、图片元数据与 `image_limits`，每页最多 5 份，使用独立的 `reference_page` 翻页，`reference_total` 返回总数，不影响记录分页。元数据不代表模型看过图。
 - 看板独立展示参考资料摘要与缩略图，最多预览 3 份，不作为背景。`/plan refs 计划ID` 或 `custom_plan_images(plan_id, operation="show")` 向用户发送高清保存图，**不代表模型已读图**。`/plan images 计划ID 记录ID` 继续发送该记录附图。
@@ -117,7 +117,7 @@ python -m playwright install --with-deps chromium
 同时附上图片时可精确执行保存与管理操作：
 
 ```text
-/plan exec reference_add {"plan_id":"p_...","revision":1,"image_index":1,"title":"打卡截图样例","purpose":"用于确认日期、数量及单位的读取位置"}
+/plan exec reference_add {"plan_id":"p_...","revision":1,"image_source":"https://example.com/sample.png","title":"打卡截图样例","purpose":"用于确认日期、数量及单位的读取位置"}
 /plan refs p_...
 /plan exec reference_update {"plan_id":"p_...","revision":2,"reference_id":"ref_...","checks":"日期为打卡当天；数量和单位与填写记录一致","as_basis":true}
 ```

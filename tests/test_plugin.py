@@ -654,7 +654,7 @@ def image_event():
     return event
 
 
-async def test_message_images_are_saved_only_explicitly_and_sent_privately(
+async def test_images_are_saved_only_explicitly_and_sent_privately(
     plugin, image_event
 ):
     created = json.loads(
@@ -665,7 +665,7 @@ async def test_message_images_are_saved_only_explicitly_and_sent_privately(
     pid = created["result"]["plan_id"]
     assert not list(plugin.storage.media.directory.iterdir())
     query = json.loads(await plugin.custom_plan_query(image_event, {"plan_id": pid}))
-    assert query["result"]["message_images"] == [{"index": 1}]
+    assert "message_images" not in query["result"]
     added = json.loads(
         await plugin.custom_plan_records(
             image_event,
@@ -696,6 +696,53 @@ async def test_message_images_are_saved_only_explicitly_and_sent_privately(
     assert not wrong_id["ok"] and len(image_event.sent) == 1
 
 
+async def test_image_source_can_be_saved_from_later_text_message(
+    plugin, image_event, tmp_path
+):
+    import base64
+
+    created = json.loads(
+        await plugin.custom_plan_manage(
+            image_event, "create", {"name": "直接附图", "preset": "checkin"}
+        )
+    )
+    plan_id = created["result"]["plan_id"]
+    image_path = tmp_path / "steps.png"
+    image_path.write_bytes(
+        base64.b64decode(image_event.message_obj.message[0].file.removeprefix("base64://"))
+    )
+    followup = Event(message="followup")
+    added = json.loads(
+        await plugin.custom_plan_records(
+            followup,
+            "add",
+            {
+                "plan_id": plan_id,
+                "revision": 1,
+                "records": [{"values": {}, "images": {"add": [str(image_path)]}}],
+            },
+        )
+    )
+    assert added["ok"]
+    records = (await plugin.storage.query(plugin.actor(followup), {"plan_id": plan_id}))[
+        "records"
+    ]
+    assert len(records[0]["images"]) == 1
+    reference = json.loads(
+        await plugin.custom_plan_manage(
+            followup,
+            "reference_add",
+            {
+                "plan_id": plan_id,
+                "revision": 2,
+                "image_source": str(image_path),
+                "purpose": "核对截图",
+            },
+        )
+    )
+    assert reference["ok"]
+
+
 async def test_upload_retry_does_not_require_an_expired_source(
     plugin, image_event, monkeypatch
 ):
@@ -723,7 +770,7 @@ async def test_upload_retry_does_not_require_an_expired_source(
     assert len(list(plugin.storage.media.directory.glob("*.webp"))) == 2
 
 
-async def test_untrusted_sources_indices_and_read_only_uploads_are_rejected_before_read(
+async def test_invalid_indices_and_read_only_uploads_are_rejected_before_read(
     plugin, image_event, monkeypatch
 ):
     owner = Event(group="g1", message="create")
@@ -740,14 +787,7 @@ async def test_untrusted_sources_indices_and_read_only_uploads_are_rejected_befo
 
     monkeypatch.setattr(plugin.storage.media, "read_source", track)
     image_event.group = "g1"
-    for additions in (
-        ["http://127.0.0.1/image"],
-        ["C:\\secret.png"],
-        [True],
-        [0],
-        [2],
-        [1, 1],
-    ):
+    for additions in ([True], [0], [2], [1, 1]):
         result = json.loads(
             await plugin.custom_plan_records(
                 image_event,

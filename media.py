@@ -122,11 +122,11 @@ class MediaLibrary:
             with path.open("rb") as stream:
                 return stream.read(self.max_bytes + 1)
         except OSError as exc:
-            raise PlanError("无法读取当前消息中的图片。") from exc
+            raise PlanError("无法读取消息中的图片。") from exc
 
     async def read_source(self, source: str) -> bytes:
         if not isinstance(source, str) or not source:
-            raise PlanError("当前消息图片没有可用的数据来源。")
+            raise PlanError("消息图片没有可用的数据来源。")
         if source.startswith(("http://", "https://")):
             validate_remote_url(source)
             resolver = PublicResolver()
@@ -163,7 +163,7 @@ class MediaLibrary:
                                 raise PlanError("图片超过单张大小限制。")
                         return bytes(content)
             except (aiohttp.ClientError, TimeoutError, OSError) as exc:
-                raise PlanError("无法安全下载当前消息图片，请重新发送。") from exc
+                raise PlanError("无法安全下载消息图片，请重新发送。") from exc
             finally:
                 await resolver.close()
         if source.startswith("base64://") or source.startswith("data:image/"):

@@ -361,7 +361,7 @@ class Storage:
                 ),
             }
 
-    def _image_payload(self, params: dict, prepared: dict[int, PreparedImage]) -> dict:
+    def _image_payload(self, params: dict, prepared: dict[int | str, PreparedImage]) -> dict:
         payload = deepcopy(params)
         if not isinstance(payload.get("records"), list):
             raise PlanError("records 必须是数组。")
@@ -372,17 +372,23 @@ class Storage:
             additions = patch.get("add", [])
             if (
                 not isinstance(additions, list)
-                or any(type(index) is not int or index < 1 for index in additions)
+                or any(
+                    not (
+                        type(source) is int and source >= 1
+                        or isinstance(source, str) and bool(source)
+                    )
+                    for source in additions
+                )
                 or len(set(additions)) != len(additions)
             ):
                 raise PlanError(
-                    "images.add 必须是当前消息中不重复的图片序号，从 1 开始。"
+                    "images.add 必须是不重复的图片来源或当前消息图片序号。"
                 )
-            if any(index not in prepared for index in additions):
+            if any(source not in prepared for source in additions):
                 raise PlanError(
-                    "只能添加当前消息中由插件读取的图片，不能指定网址、路径或图片 ID。"
+                    "图片来源未被插件读取，无法添加。"
                 )
-            patch["add"] = [prepared[index].image_id for index in additions]
+            patch["add"] = [prepared[source].image_id for source in additions]
         return payload
 
     def _save_images(self, connection, plan, before, prepared, actor):
@@ -531,18 +537,27 @@ class Storage:
             {"reference_id"}
             if action == "reference_delete"
             else REFERENCE_FIELDS
-            | {"image_index"}
+            | {"image_index", "image_source"}
             | ({"reference_id"} if action == "reference_update" else set()),
             "参考资料操作",
         )
         payload = deepcopy(params)
-        if "image_index" in payload:
-            index = payload.pop("image_index")
-            if type(index) is not int or index < 1 or index not in prepared:
-                raise PlanError("image_index 必须是当前消息中由插件读取的图片序号。")
-            payload["images"] = [prepared[index].image_id]
+        if "image_index" in payload and "image_source" in payload:
+            raise PlanError("image_index 与 image_source 只能选择一项。")
+        if "image_index" in payload or "image_source" in payload:
+            source = (
+                payload.pop("image_source")
+                if "image_source" in payload
+                else payload.pop("image_index")
+            )
+            if not (
+                type(source) is int and source >= 1
+                or isinstance(source, str) and bool(source)
+            ) or source not in prepared:
+                raise PlanError("图片来源未被插件读取，无法添加。")
+            payload["images"] = [prepared[source].image_id]
         elif action == "reference_add":
-            raise PlanError("新增参考资料必须指定当前消息的 image_index。")
+            raise PlanError("新增参考资料必须指定 image_source 或 image_index。")
         return payload
 
     async def visual_snapshot(
@@ -1131,7 +1146,7 @@ class Storage:
         plan_id: str = "",
         revision: int = 0,
         message_key: str = "",
-        prepared_images: dict[int, PreparedImage] | None = None,
+        prepared_images: dict[int | str, PreparedImage] | None = None,
     ) -> dict:
         """Commit one operation with a stable request key and revision check.
 

@@ -10,7 +10,7 @@
   "images_per_record": {"type": "int", "description": "每条记录最多附图数", "hint": "范围 1～30；调小后不删除已有附图。", "default": 3},
   "references_per_plan": {"type": "int", "description": "每个计划最多参考资料数", "hint": "范围 1～30，每份包含一张无损保存图及用途说明；与记录附图共用计划/全局额度。调小不删除已有资料。", "default": 5},
 
-  "image_max_mb": {"type": "int", "description": "单张附图大小上限（MB）", "hint": "范围 1～50，仅支持当前消息中的 JPEG、PNG、静态 WebP。", "default": 10},
+  "image_max_mb": {"type": "int", "description": "单张附图大小上限（MB）", "hint": "范围 1～50，仅支持消息中的 JPEG、PNG、静态 WebP。", "default": 10},
   "image_max_pixels": {"type": "int", "description": "单张附图像素上限", "hint": "宽乘高，范围 1000000～50000000。", "default": 20000000},
   "image_plan_quota_mb": {"type": "int", "description": "单计划图片存储额度（MB）", "hint": "参考图与记录图共用；包含保存图、缩略图及仍被撤销快照、监督日志引用的图片。", "default": 100},
   "image_total_quota_mb": {"type": "int", "description": "插件图片总存储额度（MB）", "hint": "包含历史图片和等待回收的文件，默认 1 GB。", "default": 1024},

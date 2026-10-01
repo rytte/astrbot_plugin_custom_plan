@@ -110,7 +110,7 @@ class CustomPlanPlugin(Star):
         self.renderer.image_loader = self.storage.image_thumbnail
         await self.renderer.initialize()
 
-    def message_images(self, event: AstrMessageEvent) -> list[Image]:
+    def current_images(self, event: AstrMessageEvent) -> list[Image]:
         getter = getattr(event, "get_messages", None)
         return (
             [
@@ -122,11 +122,22 @@ class CustomPlanPlugin(Star):
             else []
         )
 
+    def image_source(self, component: Image) -> str:
+        source = component.url or component.file or component.path
+        if (
+            source
+            and not source.startswith(("http://", "https://", "file:", "base64://", "data:"))
+            and not Path(source).is_absolute()
+            and component.path
+        ):
+            source = component.path
+        return source
+
     async def prepare_images(self, event, actor, plan_id, params):
         items = params.get("records")
         if not isinstance(items, list) or not 1 <= len(items) <= 50:
             raise PlanError("records 必须包含 1～50 条操作。")
-        indices = set()
+        sources = []
         for item in items:
             if not isinstance(item, dict):
                 raise PlanError("记录操作必须是对象。")
@@ -137,11 +148,17 @@ class CustomPlanPlugin(Star):
             if (
                 not isinstance(additions, list)
                 or len(additions) > self.storage.media.images_per_record
-                or any(type(index) is not int or index < 1 for index in additions)
+                or any(
+                    not (
+                        type(source) is int and source >= 1
+                        or isinstance(source, str) and bool(source)
+                    )
+                    for source in additions
+                )
                 or len(set(additions)) != len(additions)
             ):
                 raise PlanError(
-                    "images.add 必须是当前消息中不重复的图片序号，从 1 开始，且不能超过单条记录的附图上限。"
+                    "images.add 必须是不重复的图片来源或当前消息图片序号，且不能超过单条记录的附图上限。"
                 )
             if (
                 not isinstance(removals, list)
@@ -154,24 +171,24 @@ class CustomPlanPlugin(Star):
                 or len(set(removals)) != len(removals)
             ):
                 raise PlanError("images.remove 必须是这条记录中不重复的有效图片 ID。")
-            indices.update(additions)
-        if not indices:
+            sources.extend(additions)
+        sources = list(dict.fromkeys(sources))
+        if not sources:
             return {}
-        if len(indices) > 10:
-            raise PlanError("单次操作最多读取 10 张消息图片，请分批保存。")
-        return await self.read_message_images(event, actor, plan_id, indices)
+        if len(sources) > 10:
+            raise PlanError("单次操作最多读取 10 张图片，请分批保存。")
+        return await self.read_images(event, actor, plan_id, sources)
 
-    async def read_message_images(
-        self, event, actor, plan_id, indices, lossless=False, write=True
-    ):
-        if not indices:
+    async def read_images(self, event, actor, plan_id, sources, lossless=False, write=True):
+        if not sources:
             return {}
         plan = await self.storage.snapshot(plan_id, actor)
         authorize(plan, actor, write)
-        components = self.message_images(event)
-        if max(indices) > len(components):
+        components = self.current_images(event)
+        indices = [source for source in sources if type(source) is int]
+        if indices and max(indices) > len(components):
             raise PlanError(
-                f"当前消息只有 {len(components)} 张图片；不读取引用消息或历史消息中的图片。"
+                f"当前消息只有 {len(components)} 张图片；可直接传图片来源。"
             )
         prepared = {}
         total = 0
@@ -181,25 +198,19 @@ class CustomPlanPlugin(Star):
         try:
             async with asyncio.timeout(60):
                 async with self.image_lock:
-                    for index in sorted(indices):
-                        component = components[index - 1]
-                        source = component.url or component.file or component.path
-                        if (
-                            source
-                            and not source.startswith(
-                                ("http://", "https://", "file:", "base64://", "data:")
-                            )
-                            and not Path(source).is_absolute()
-                            and component.path
-                        ):
-                            source = component.path
+                    for selector in sources:
+                        source = (
+                            self.image_source(components[selector - 1])
+                            if type(selector) is int
+                            else selector
+                        )
                         content = await self.storage.media.read_source(source)
                         total += len(content)
                         if total > 50 * 1024 * 1024:
                             raise PlanError(
                                 "单次操作的图片总大小不能超过 50 MB，请分批保存。"
                             )
-                        prepared[index] = await self.storage.media.prepare_async(
+                        prepared[selector] = await self.storage.media.prepare_async(
                             content, lossless=lossless
                         )
         except TimeoutError as exc:
@@ -273,10 +284,6 @@ class CustomPlanPlugin(Star):
                 raise PlanError("params 必须是对象。")
             if action == "query":
                 result = await self.storage.query(actor, params)
-                result["message_images"] = [
-                    {"index": index}
-                    for index in range(1, len(self.message_images(event)) + 1)
-                ]
             elif action == "supervision_rules":
                 object_keys(params, {"plan_id"}, "监督规则查询")
                 result = await self.storage.supervision_rules(
@@ -322,7 +329,7 @@ class CustomPlanPlugin(Star):
                             {"reference_id"}
                             if action == "reference_delete"
                             else REFERENCE_FIELDS
-                            | {"image_index"}
+                            | {"image_index", "image_source"}
                             | (
                                 {"reference_id"}
                                 if action == "reference_update"
@@ -335,14 +342,17 @@ class CustomPlanPlugin(Star):
                         )
                         if replay is not None:
                             return encode({"ok": True, "result": replay})
-                        if "image_index" in payload:
-                            index = payload["image_index"]
-                            if type(index) is not int or index < 1:
-                                raise PlanError(
-                                    "image_index 必须是当前消息图片序号，从 1 开始。"
-                                )
-                            prepared = await self.read_message_images(
-                                event, actor, plan_id, {index}, lossless=True
+                        if "image_index" in payload and "image_source" in payload:
+                            raise PlanError("image_index 与 image_source 只能选择一项。")
+                        if "image_index" in payload or "image_source" in payload:
+                            source = payload.get("image_source", payload.get("image_index"))
+                            if not (
+                                type(source) is int and source >= 1
+                                or isinstance(source, str) and bool(source)
+                            ):
+                                raise PlanError("图片来源必须是非空字符串或当前消息图片序号。")
+                            prepared = await self.read_images(
+                                event, actor, plan_id, [source], lossless=True
                             )
                     result = await self.storage.mutate(
                         actor,
@@ -382,7 +392,7 @@ class CustomPlanPlugin(Star):
         references 返回计划参考资料及经用户确认的核对项，每页最多5份，用 reference_page（默认1）独立翻页，reference_total 为总数；参考资料增删改使用 custom_plan_manage，图片查看/读取使用 custom_plan_images。图片元数据不等于模型已看图。
 
         Args:
-            params(object): 可省略或传空对象，默认列出计划。工具调用示例：{} 或 {params:{}}；查询指定计划使用 {params:{plan_id:计划ID}}。可含 plan_id、page（默认1）、page_size（1～50）、include_deleted（默认false）。查询记录可加 filters={equals:{field_id:值},date_field:日期字段ID,start:YYYY-MM-DD,end:YYYY-MM-DD}，所有条件同时满足。记录的images数组保存图片ID，image_metadata返回尺寸等元数据，不含文件路径或图片内容；message_images提供当前消息的图片序号（从1开始），供用户明确要求保存附图时选择。
+            params(object): 可省略或传空对象，默认列出计划。工具调用示例：{} 或 {params:{}}；查询指定计划使用 {params:{plan_id:计划ID}}。可含 plan_id、page（默认1）、page_size（1～50）、include_deleted（默认false）。查询记录可加 filters={equals:{field_id:值},date_field:日期字段ID,start:YYYY-MM-DD,end:YYYY-MM-DD}，所有条件同时满足。记录的images数组保存图片ID，image_metadata返回尺寸等元数据，不含文件路径或图片内容。保存图片时直接把图片来源传给写入工具。
         """
         return await self.execute(event, "query", {} if params is None else params)
 
@@ -407,7 +417,7 @@ class CustomPlanPlugin(Star):
 
         监督操作均需 plan_id、revision。preview 必须提供 execution_standard:用户确认的达标条件（最多2000字）、end_date:YYYY-MM-DD/null（长期，须用户明确选择）；可选 protected_fields:字段ID数组（通用计划必填，不猜业务含义）、backfill_days:0～3650（打卡/累计，默认0）。execution_standard 不能与结构化计划规则冲突；缺少达标条件时先询问，不能用 preview 代替规则确认。enable 还需预览返回的 confirmation_token。三种退出操作无额外参数。开启和退出仅创建者可操作。
 
-        参考资料使用 reference_add: {plan_id,revision,image_index,purpose,title?,checks?,as_basis?:bool}；reference_update: {plan_id,revision,reference_id,image_index?,purpose?,title?,checks?,as_basis?}；reference_delete: {plan_id,revision,reference_id}。image_index 是当前消息图片序号，从1开始，不接受路径、网址、Base64或已有图片ID。只在用户明确要求时保存，用途不明确先澄清。checks 必须由用户确认，不能直接采用模型读图建议；as_basis 默认false，仅在用户确认用途与核对项后设置true，监督期间冻结参考依据，辅助资料可修改。查看或供当前模型读取图片使用 custom_plan_images；记录凭证仍使用 custom_plan_records。
+        参考资料使用 reference_add: {plan_id,revision,image_source,purpose,title?,checks?,as_basis?:bool}；reference_update: {plan_id,revision,reference_id,image_source?,purpose?,title?,checks?,as_basis?}；reference_delete: {plan_id,revision,reference_id}。image_source 是图片的本地绝对路径、公共 HTTP/HTTPS 地址或 Base64/data URI，直接读取并保存；兼容 image_index 指定当前消息内从1开始的图片序号。只在用户明确要求时保存，用途不明确先澄清。checks 必须由用户确认，不能直接采用模型读图建议；as_basis 默认false，仅在用户确认用途与核对项后设置true，监督期间冻结参考依据，辅助资料可修改。查看或供当前模型读取图片使用 custom_plan_images；记录凭证仍使用 custom_plan_records。
 
         Args:
             operation(string): create、update、delete、undo、reference_add、reference_update、reference_delete；监督使用 supervision_preview、supervision_enable、supervision_request_exit、supervision_cancel_exit、supervision_confirm_exit。
@@ -427,7 +437,7 @@ class CustomPlanPlugin(Star):
 
         Args:
             operation(string): add、update、delete 或 correct。
-            params(object): 必须含plan_id、revision、records数组（1～50项）。add每项{values:{field_id:值},images?:{add:[当前消息图片序号]}}；update每项{record_id,values:{field_id:新值},images?:{add:[序号],remove:[已有图片ID]}}；仅修改图片时values传{}。图片序号从1开始，仅支持当前消息的JPEG/PNG/静态WebP，默认每条最多3张、每张10MB，以query返回的image_limits为准；不能传图片网址、路径或Base64。delete每项{record_id}。仅传要修改的字段，置空用null。日期YYYY-MM-DD；checkin默认当天数量1，goal必须提供数量，todo默认数量0；todo数量非负，设为正数完成任务，设为0重新打开。不能指定作者或completed_at。当前日期按查询返回的计划时区解释。
+            params(object): 必须含plan_id、revision、records数组（1～50项）。add每项{values:{field_id:值},images?:{add:[图片来源]}}；update每项{record_id,values:{field_id:新值},images?:{add:[图片来源],remove:[已有图片ID]}}；仅修改图片时values传{}。图片来源可用本地绝对路径、公共 HTTP/HTTPS 地址或 Base64/data URI；兼容整数序号指定当前消息内图片（从1开始）。仅支持JPEG/PNG/静态WebP，默认每条最多3张、每张10MB，以query返回的image_limits为准。delete每项{record_id}。仅传要修改的字段，置空用null。日期YYYY-MM-DD；checkin默认当天数量1，goal必须提供数量，todo默认数量0；todo数量非负，设为正数完成任务，设为0重新打开。不能指定作者或completed_at。当前日期按查询返回的计划时区解释。
         """
         if operation not in RECORD_ACTIONS:
             return encode(
