@@ -72,6 +72,75 @@ async def plugin(storage, tmp_path):
     await plugin.terminate()
 
 
+async def test_query_schema_exposes_params_and_reference_instructions(plugin):
+    from astrbot.core.provider.register import llm_tools
+
+    tool = llm_tools.get_func("custom_plan_query")
+    assert tool.parameters["properties"]["params"]["type"] == "object"
+    assert "references" in tool.description
+    assert "custom_plan_images" in tool.description
+
+
+@pytest.mark.parametrize("tool_args", [{}, {"params": {}}, {"params": None}])
+async def test_query_without_params_works_through_permission_guarded_executor(
+    plugin, monkeypatch, tool_args
+):
+    from unittest.mock import AsyncMock
+
+    from astrbot.core.agent.run_context import ContextWrapper
+    from astrbot.core.agent.tool import FunctionTool
+    from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
+    from astrbot.core.provider.func_tool_manager import (
+        FunctionToolManager,
+        _PermissionGuardedTool,
+    )
+    from astrbot.core.provider.register import llm_tools
+
+    event = Event()
+    created = json.loads(
+        await plugin.custom_plan_manage(event, "create", {"name": "查询测试"})
+    )
+    plan_id = created["result"]["plan_id"]
+    registered = llm_tools.get_func("custom_plan_query")
+    tool = FunctionTool(
+        name=registered.name,
+        description=registered.description,
+        parameters=registered.parameters,
+        handler=plugin.custom_plan_query,
+    )
+    manager = FunctionToolManager()
+    permission_check = AsyncMock(return_value=None)
+    monkeypatch.setattr(manager, "_check_tool_permission", permission_check)
+    guarded = _PermissionGuardedTool(tool, manager)
+    run_context = ContextWrapper(context=SimpleNamespace(event=event))
+    responses = [
+        response
+        async for response in FunctionToolExecutor.execute(
+            guarded, run_context, **tool_args
+        )
+    ]
+    assert len(responses) == 1
+    result = json.loads(responses[0].content[0].text)
+    assert result["ok"]
+    assert [plan["plan_id"] for plan in result["result"]["plans"]] == [plan_id]
+    permission_check.assert_awaited_once_with("custom_plan_query", run_context)
+
+
+@pytest.mark.parametrize("params", [[], "", False, 0])
+async def test_query_rejects_invalid_falsy_params(plugin, params):
+    result = json.loads(await plugin.custom_plan_query(Event(), params))
+    assert not result["ok"] and "params 必须是对象" in result["error"]
+
+
+async def test_query_without_params_only_lists_authorized_plans(plugin):
+    created = json.loads(
+        await plugin.custom_plan_manage(Event(), "create", {"name": "私有计划"})
+    )
+    assert created["ok"]
+    result = json.loads(await plugin.custom_plan_query(Event("other")))
+    assert result["ok"] and result["result"]["total"] == 0
+
+
 async def test_browser_service_resolution_requires_an_active_plugin(plugin):
     service = object()
     plugin.context.get_registered_star = lambda name: SimpleNamespace(

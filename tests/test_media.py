@@ -507,7 +507,7 @@ async def test_v5_upgrade_only_adds_media_table(storage):
     await storage.initialize()
     assert await storage.snapshot(pid, OWNER) == before
     with sqlite3.connect(storage.path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
         assert connection.execute("SELECT COUNT(*) FROM media").fetchone()[0] == 0
 
 

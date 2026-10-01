@@ -76,3 +76,7 @@ p { margin: 6px 0; overflow-wrap: anywhere; }
 .attachment-record { margin-top: 12px; overflow-wrap: anywhere; }
 .attachment-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
 .attachment-thumb { width: 160px; height: 120px; object-fit: contain; border-radius: var(--radius-record); background: var(--surface-subtle); }
+.reference-card { display: flex; gap: 16px; margin-top: 16px; align-items: flex-start; }
+.reference-thumb { width: 120px; height: 90px; flex-shrink: 0; }
+.reference-details { min-width: 0; overflow-wrap: anywhere; }
+.reference-details p { margin: 6px 0; }

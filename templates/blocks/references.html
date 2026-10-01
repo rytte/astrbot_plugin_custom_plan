@@ -1,0 +1,8 @@
+<h2>计划参考资料 · {{ reference_count }} 份</h2>
+{% for reference in references %}
+<div class="reference-card">
+{% for image in reference.images %}{% if image.src %}<img class="attachment-thumb reference-thumb" src="{{ image.src }}" alt="计划参考图">{% else %}<span>参考图暂不可预览</span>{% endif %}{% endfor %}
+<div class="reference-details"><strong>{{ reference.title }}</strong><div class="scope">{{ '监督期间冻结的执行依据' if reference.as_basis and supervised else '已确认核对依据' if reference.as_basis else '辅助资料' }}</div><p>{{ reference.purpose | truncate(140, true) }}</p>{% if reference.checks %}<p class="scope">核对项：{{ reference.checks | truncate(180, true) }}</p>{% endif %}</div>
+</div>
+{% endfor %}
+<p class="scope">参考资料不自动认定达标。{% if reference_count > references | length %}仅预览前 {{ references | length }} 份。{% endif %}查看保存图：/plan refs {{ plan.plan_id }}</p>

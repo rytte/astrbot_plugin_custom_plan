@@ -16,6 +16,7 @@ from uuid import uuid4
 from . import supervision
 from .appearance import DEFAULT_THEME, THEMES
 from .domain import (
+    REFERENCE_FIELDS,
     Actor,
     PlanError,
     allowed,
@@ -172,9 +173,9 @@ class Storage:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, 5, 6):
-                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 6。")
-            if version == 6:
+            if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8):
+                raise PlanError(f"不支持的计划数据库版本：{version}，当前支持版本 8。")
+            if version == 8:
                 self._purge_expired_deleted(connection)
                 return
             if version == 0:
@@ -241,7 +242,7 @@ class Storage:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS media_plan ON media(plan_id)"
             )
-            connection.execute("PRAGMA user_version=6")
+            connection.execute("PRAGMA user_version=8")
             self._purge_expired_deleted(connection)
 
     async def cleanup_media(self, force: bool = False) -> None:
@@ -258,11 +259,16 @@ class Storage:
             connection.execute("BEGIN IMMEDIATE")
             self._purge_expired_deleted(connection)
             references = set()
-            for table, column in (
+            sources = [
                 ("plans", "document"),
                 ("changes", "previous"),
                 ("supervision_log", "document"),
-            ):
+            ]
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='image_reviews'"
+            ).fetchone():
+                sources.append(("image_reviews", "document"))
+            for table, column in sources:
                 for row in connection.execute(
                     f"SELECT {column} FROM {table} WHERE {column} IS NOT NULL"
                 ):
@@ -380,6 +386,13 @@ class Storage:
         return payload
 
     def _save_images(self, connection, plan, before, prepared, actor):
+        count = len(plan.get("references", []))
+        if count > self.media.references_per_plan and count > len(
+            (before or {}).get("references", [])
+        ):
+            raise PlanError(
+                f"每个计划最多保留 {self.media.references_per_plan} 份参考资料。"
+            )
         old_records = (
             {record["record_id"]: record for record in before.get("records", [])}
             if before
@@ -406,7 +419,7 @@ class Storage:
             if image.image_id in identifiers and image.image_id not in existing
         }
         if identifiers - existing - set(additions):
-            raise PlanError("记录包含不存在或不属于本计划的图片。")
+            raise PlanError("记录或参考资料包含不存在或不属于本计划的图片。")
         size = sum(image.size for image in additions.values())
         if not size:
             return
@@ -511,6 +524,117 @@ class Storage:
                     raise PlanError("记录附图文件缺失，请联系管理员恢复备份。")
                 result.append({**dict(row), "path": path})
             return result
+
+    def _reference_payload(self, action, params, prepared):
+        object_keys(
+            params,
+            {"reference_id"}
+            if action == "reference_delete"
+            else REFERENCE_FIELDS
+            | {"image_index"}
+            | ({"reference_id"} if action == "reference_update" else set()),
+            "参考资料操作",
+        )
+        payload = deepcopy(params)
+        if "image_index" in payload:
+            index = payload.pop("image_index")
+            if type(index) is not int or index < 1 or index not in prepared:
+                raise PlanError("image_index 必须是当前消息中由插件读取的图片序号。")
+            payload["images"] = [prepared[index].image_id]
+        elif action == "reference_add":
+            raise PlanError("新增参考资料必须指定当前消息的 image_index。")
+        return payload
+
+    async def visual_snapshot(
+        self, actor, plan_id, reference_ids=None, record_id=None, include_basis=False
+    ):
+        return await asyncio.to_thread(
+            self._visual_snapshot,
+            actor,
+            plan_id,
+            reference_ids,
+            record_id,
+            include_basis,
+        )
+
+    def _visual_snapshot(self, actor, plan_id, reference_ids, record_id, include_basis):
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._purge_expired_deleted(connection)
+            plan = self._load(connection, plan_id, actor)
+            state = self._supervision(connection, plan_id)
+            active = supervision.summary(state, supervision.utc_now())["active"]
+            frozen = state["constraints"].get("reference_basis", []) if active else []
+            references = {
+                item["reference_id"]: deepcopy(item)
+                for item in plan.get("references", [])
+            }
+            for item in frozen:
+                references[item["reference_id"]] = {
+                    **references.get(item["reference_id"], {}),
+                    **deepcopy(item),
+                }
+            if reference_ids is not None:
+                if (
+                    not isinstance(reference_ids, list)
+                    or not (0 if record_id else 1) <= len(reference_ids) <= 30
+                    or any(
+                        not isinstance(identifier, str) or identifier not in references
+                        for identifier in reference_ids
+                    )
+                    or len(set(reference_ids)) != len(reference_ids)
+                ):
+                    raise PlanError(
+                        "reference_ids 必须是本计划中不重复的有效参考资料 ID 数组。"
+                    )
+                selected = list(reference_ids)
+            else:
+                selected = list(references)
+            if include_basis:
+                selected.extend(
+                    item["reference_id"]
+                    for item in frozen
+                    if item["reference_id"] not in selected
+                )
+            if not selected and record_id is None:
+                raise PlanError("计划还没有参考资料，请先保存参考图及用途说明。")
+            chosen = [references[identifier] for identifier in selected]
+            record = None
+            if record_id is not None:
+                record = next(
+                    (
+                        item
+                        for item in plan["records"]
+                        if item["record_id"] == record_id
+                    ),
+                    None,
+                )
+                if record is None or not record.get("images"):
+                    raise PlanError(
+                        "记录不存在或没有附图，请查询 record_id 或显式保存记录附图。"
+                    )
+            files = {}
+            for identifier in referenced_images(chosen) | referenced_images(record):
+                row = connection.execute(
+                    "SELECT image_id,sha256,size,width,height FROM media WHERE image_id=? AND plan_id=?",
+                    (identifier, plan_id),
+                ).fetchone()
+                path = self.media.path(identifier)
+                if row is None or not path.is_file():
+                    raise PlanError(
+                        "参考资料或记录图片文件缺失，请联系管理员恢复备份。"
+                    )
+                files[identifier] = {**dict(row), "path": path}
+            return {
+                "plan": plan,
+                "references": chosen,
+                "record": record,
+                "files": files,
+                "supervised": active,
+                "execution_standard": state["constraints"]["execution_standard"]
+                if active
+                else "",
+            }
 
     @staticmethod
     def _supervision(connection, plan_id: str) -> dict | None:
@@ -848,6 +972,7 @@ class Storage:
         return result
 
     def _query(self, actor: Actor, params: dict) -> dict:
+
         if "supervision_history" in params:
             object_keys(
                 params, {"plan_id", "page", "supervision_history"}, "监督日志查询"
@@ -863,7 +988,14 @@ class Storage:
             )
         object_keys(
             params,
-            {"plan_id", "page", "page_size", "filters", "include_deleted"},
+            {
+                "plan_id",
+                "page",
+                "page_size",
+                "filters",
+                "include_deleted",
+                "reference_page",
+            },
             "查询参数",
         )
         page, size = params.get("page", 1), params.get("page_size", 20)
@@ -876,6 +1008,11 @@ class Storage:
             raise PlanError("page 为正整数，page_size 为 1～50。")
         if type(params.get("include_deleted", False)) is not bool:
             raise PlanError("include_deleted 必须是布尔值。")
+        reference_page = params.get("reference_page", 1)
+        if type(reference_page) is not int or reference_page < 1:
+            raise PlanError("reference_page 必须是正整数。")
+        if "reference_page" in params and not params.get("plan_id"):
+            raise PlanError("参考资料分页需要指定 plan_id。")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._purge_expired_deleted(connection)
@@ -943,7 +1080,16 @@ class Storage:
             result.pop("owner")
             result.pop("group")
             result["records"] = records[(page - 1) * size : page * size]
-            page_images = referenced_images(result["records"])
+            result.setdefault("references", [])
+            result["reference_total"] = len(result["references"])
+            result["reference_page"] = reference_page
+            result["reference_page_size"] = 5
+            result["references"] = result["references"][
+                (reference_page - 1) * 5 : reference_page * 5
+            ]
+            page_images = referenced_images(result["records"]) | referenced_images(
+                result["references"]
+            )
             result["image_metadata"] = {
                 row["image_id"]: dict(row)
                 for row in connection.execute(
@@ -954,6 +1100,7 @@ class Storage:
             }
             result["image_limits"] = {
                 "per_record": self.media.images_per_record,
+                "references_per_plan": self.media.references_per_plan,
                 "max_mb": self.media.image_max_mb,
                 "plan_quota_mb": self.media.image_plan_quota_mb,
             }
@@ -1124,6 +1271,14 @@ class Storage:
                         )
                     if operation in {"add_records", "update_records"}:
                         payload = self._image_payload(payload, prepared_images)
+                    elif operation in {
+                        "reference_add",
+                        "reference_update",
+                        "reference_delete",
+                    }:
+                        payload = self._reference_payload(
+                            operation, payload, prepared_images
+                        )
                     changed = apply_change(plan, operation, payload, actor)
                     if active:
                         corrections = supervision.enforce(

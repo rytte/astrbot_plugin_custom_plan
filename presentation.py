@@ -479,5 +479,15 @@ def build_view(
         "blocks": blocks,
         "image_records": image_records,
         "image_count": image_count,
+        "references": [
+            {
+                **item,
+                "images": [
+                    {"image_id": identifier, "src": ""} for identifier in item["images"]
+                ],
+            }
+            for item in plan.get("references", [])[:3]
+        ],
+        "reference_count": len(plan.get("references", [])),
         "supervised": plan.get("supervision", {}).get("active", False),
     }

@@ -18,6 +18,64 @@ BLOCKS = {"statistics", "notes"}
 MAX_RECORDS = 2000
 MAX_FIELDS = 24
 MAX_BLOCKS = 12
+REFERENCE_ID = re.compile(r"ref_[0-9a-f]{12}\Z")
+REFERENCE_FIELDS = {"title", "purpose", "checks", "as_basis"}
+
+
+def reference_basis(plan: dict) -> list[dict]:
+    return [
+        {
+            key: deepcopy(item[key])
+            for key in (
+                "reference_id",
+                "images",
+                "title",
+                "purpose",
+                "checks",
+                "as_basis",
+            )
+        }
+        for item in sorted(
+            plan.get("references", []), key=lambda item: item["reference_id"]
+        )
+        if item["as_basis"]
+    ]
+
+
+def validate_references(items) -> None:
+    if not isinstance(items, list) or len(items) > 30:
+        raise PlanError("计划最多保留 30 份参考资料。")
+    identifiers = set()
+    for item in items:
+        object_keys(
+            item,
+            REFERENCE_FIELDS
+            | {"reference_id", "images", "author", "created_at", "updated_at"},
+            "参考资料",
+        )
+        identifier = item.get("reference_id")
+        if (
+            not isinstance(identifier, str)
+            or not REFERENCE_ID.fullmatch(identifier)
+            or identifier in identifiers
+        ):
+            raise PlanError("参考资料 ID 无效或重复。")
+        identifiers.add(identifier)
+        images = item.get("images")
+        if (
+            not isinstance(images, list)
+            or len(images) != 1
+            or not isinstance(images[0], str)
+            or not re.fullmatch(r"img_[0-9a-f]{32}", images[0])
+        ):
+            raise PlanError("每份参考资料必须包含一张有效图片。")
+        text(item.get("title"), "参考资料标题", 80, False)
+        text(item.get("purpose"), "参考资料用途", 1000, False)
+        text(item.get("checks"), "参考核对项", 2000)
+        if type(item.get("as_basis")) is not bool:
+            raise PlanError("as_basis 必须是布尔值。")
+        if item["as_basis"] and not item["checks"].strip():
+            raise PlanError("作为执行依据前，必须填写经用户确认的 checks 核对项。")
 
 
 class PlanError(ValueError):
@@ -221,6 +279,7 @@ def create_plan(
         "deleted": False,
         "fields": [],
         "records": [],
+        "references": [],
         "rules": {"kind": "generic"},
         "view": {
             "type": "table",
@@ -357,6 +416,7 @@ def validate_plan(plan: dict) -> None:
     """
     text(plan["name"], "名称", 80, False)
     text(plan["goal"], "目标", 500)
+    validate_references(plan.get("references", []))
     validate_render_layout(plan.get("render_layout"))
     validate_render_theme(plan.get("render_theme"))
     try:
@@ -561,7 +621,60 @@ def apply_change(plan: dict, action: str, params: dict, actor: Actor) -> list[st
         IDs created or changed by the operation.
     """
     changed = []
-    if action == "update":
+    if action in {"reference_add", "reference_update", "reference_delete"}:
+        object_keys(
+            params,
+            REFERENCE_FIELDS | {"images"}
+            if action == "reference_add"
+            else (
+                {"reference_id"}
+                if action == "reference_delete"
+                else REFERENCE_FIELDS | {"reference_id", "images"}
+            ),
+            "参考资料操作",
+        )
+        items = plan.setdefault("references", [])
+        item = None
+        if action != "reference_add":
+            item = next(
+                (
+                    item
+                    for item in items
+                    if item["reference_id"] == params.get("reference_id")
+                ),
+                None,
+            )
+            if item is None:
+                raise PlanError("参考资料不存在，请查询有效的 reference_id。")
+        if action == "reference_delete":
+            items.remove(item)
+        elif action == "reference_add":
+            item = {
+                "reference_id": "ref_" + uuid4().hex[:12],
+                "title": "参考图",
+                "purpose": "",
+                "checks": "",
+                "as_basis": False,
+                "author": actor.user,
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+                **deepcopy(params),
+            }
+            items.append(item)
+        else:
+            item.update(
+                deepcopy(
+                    {
+                        key: value
+                        for key, value in params.items()
+                        if key != "reference_id"
+                    }
+                )
+            )
+            item["updated_at"] = now_iso()
+        validate_references(items)
+        changed.append(item["reference_id"])
+    elif action == "update":
         object_keys(
             params,
             {"name", "goal", "mode", "timezone", "render_layout", "render_theme"},

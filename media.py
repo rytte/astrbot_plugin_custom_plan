@@ -23,6 +23,7 @@ from .domain import PlanError
 
 IMAGE_ID = re.compile(r"img_[0-9a-f]{32}\Z")
 LIMITS = {
+    "references_per_plan": (5, 1, 30),
     "images_per_record": (3, 1, 30),
     "image_max_mb": (10, 1, 50),
     "image_max_pixels": (20_000_000, 1_000_000, 50_000_000),
@@ -182,7 +183,7 @@ class MediaLibrary:
             return content
         return await asyncio.to_thread(self._read_local, source)
 
-    def prepare(self, data: bytes) -> PreparedImage:
+    def prepare(self, data: bytes, lossless: bool = False) -> PreparedImage:
         if not data or len(data) > self.max_bytes:
             raise PlanError("图片为空或超过单张大小限制。")
         try:
@@ -206,7 +207,14 @@ class MediaLibrary:
                         )
             with image:
                 full = BytesIO()
-                image.save(full, format="WEBP", quality=90, method=4)
+                image.save(
+                    full,
+                    format="WEBP",
+                    quality=90,
+                    method=4,
+                    lossless=lossless,
+                    exact=lossless,
+                )
                 width, height = image.size
                 image.thumbnail((320, 240))
                 small = BytesIO()
@@ -232,8 +240,9 @@ class MediaLibrary:
         ) as exc:
             raise PlanError("图片损坏或格式无效，无法保存。") from exc
 
-    async def prepare_async(self, data: bytes) -> PreparedImage:
-        worker = asyncio.create_task(asyncio.to_thread(self.prepare, data))
+    async def prepare_async(self, data: bytes, lossless: bool = False) -> PreparedImage:
+        options = {"lossless": True} if lossless else {}
+        worker = asyncio.create_task(asyncio.to_thread(self.prepare, data, **options))
         try:
             return await asyncio.shield(worker)
         except asyncio.CancelledError:

@@ -13,6 +13,7 @@ from .domain import (
     object_keys,
     optional_field_id,
     parse_date,
+    reference_basis,
     require_field,
     text,
     todo_title_field,
@@ -131,6 +132,7 @@ def proposal(plan: dict, params: dict, now: datetime) -> dict:
         "backfill_days": backfill,
         "correction_minutes": CORRECTION_MINUTES,
         "exit_cooldown_hours": EXIT_COOLDOWN_HOURS,
+        "reference_basis": reference_basis(plan),
     }
     try:
         general = RULES_FILE.read_text(encoding="utf-8").strip()
@@ -152,6 +154,7 @@ def proposal(plan: dict, params: dict, now: datetime) -> dict:
         f"关键数据纠错须填写原因并留痕，只允许首次提交后{CORRECTION_MINUTES}分钟内；任务撤回完成以首次完成后{CORRECTION_MINUTES}分钟为限，纠错不刷新窗口。"
         "同一天打卡/累计数量增加属于正常进度。辅助内容可正常修改；待办视图不能替换原完成依据。"
         "图片仅作附件，不自动认定达标；可以追加图片，移除或替换已有图片必须在原记录首次提交后的纠错窗口内填写原因并留痕，旧图保留。"
+        "已确认的计划参考依据（图片、用途及核对项）在监督期间冻结，不得新增、替换、修改或删除；非依据的辅助参考资料可正常管理。读图核对仅给建议，不自动修改执行数据或认定达标。"
         f"仅创建者可申请退出，{EXIT_COOLDOWN_HOURS}小时后须再次确认，期间监督继续，可取消申请；重复申请不重置计时。"
         "固定期限按计划时区在结束日24:00结束，长期监督通过冷静期退出。"
     )
@@ -176,6 +179,10 @@ def enforce(
     for key in ("name", "goal", "timezone", "mode", "rules"):
         if after[key] != before[key]:
             raise PlanError(f"监督期间不能修改 {key}。")
+    if reference_basis(after) != state["constraints"].get("reference_basis", []):
+        raise PlanError(
+            "监督期间不能新增、修改、替换或删除已确认的参考依据；请先按冷静期退出监督。"
+        )
     original_fields = {f["field_id"]: f for f in before["fields"]}
     new_fields = {f["field_id"]: f for f in after["fields"]}
     if any(new_fields.get(key) != value for key, value in original_fields.items()):

@@ -79,7 +79,7 @@ class LocalRenderer:
         user_names: dict[str, str] | None = None,
     ) -> str:
         data = build_view(plan, options, actor_user, user_names)
-        for record in data["image_records"]:
+        for record in data["image_records"] + data["references"]:
             for image in record["images"]:
                 image["src"] = (
                     self.image_loader(plan["plan_id"], image["image_id"])

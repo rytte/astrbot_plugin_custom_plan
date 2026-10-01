@@ -624,7 +624,7 @@ async def test_v3_upgrade_preserves_documents_and_undo_history(storage):
     with sqlite3.connect(storage.path) as connection:
         assert connection.execute("SELECT * FROM plans").fetchall() == documents
         assert connection.execute("SELECT * FROM changes").fetchall() == changes
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
     assert (await storage.query(OWNER, {"plan_id": pid}))["supervision"][
         "status"
     ] == "off"
