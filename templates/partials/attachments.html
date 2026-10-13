@@ -1,0 +1,3 @@
+{% macro attachment_count(count, label='') -%}
+{% if count %}<span class="attachment-count" aria-label="附图 {{ count }} 张"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9a7 7 0 0 1 10 10l-9 9"/></svg><span>{% if label %}{{ label }} {% endif %}{{ count }} 张</span></span>{% endif %}
+{%- endmacro %}

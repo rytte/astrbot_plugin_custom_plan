@@ -72,9 +72,11 @@ p { margin: 6px 0; overflow-wrap: anywhere; }
 .calendar-count, .agenda-date { color: var(--calendar-text); }
 .agenda-day { border-top: 1px solid var(--agenda-divider); }
 .agenda-label { border-left: 3px solid var(--agenda-accent); }
-.attachment-section { margin-top: 24px; border-top: 1px solid var(--record-divider); padding-top: 16px; }
-.attachment-record { margin-top: 12px; overflow-wrap: anywhere; }
-.attachment-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.attachment-count { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: var(--font-muted); font-weight: normal; white-space: nowrap; vertical-align: baseline; }
+.attachment-count svg { width: .9em; height: .9em; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.table-record-cell { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+.table-record-cell > span:first-child { min-width: 0; }
+.calendar-day .attachment-count { display: flex; justify-content: center; margin-top: 4px; font-size: var(--font-calendar-more); }
 .attachment-thumb { width: 160px; height: 120px; object-fit: contain; border-radius: var(--radius-record); background: var(--surface-subtle); }
 .reference-card { display: flex; gap: 16px; margin-top: 16px; align-items: flex-start; }
 .reference-thumb { width: 120px; height: 90px; flex-shrink: 0; }

@@ -3,7 +3,7 @@
 {% for label in ['一','二','三','四','五','六','日'] %}<div class="weekday">{{ label }}</div>{% endfor %}
 {% for cell in view.cells %}
   <div class="calendar-day {{ 'blank' if not cell.day else '' }} {{ 'today' if cell.today else '' }}">
-  {% if cell.day %}<span>{{ cell.day }}</span>{% if cell.count %}<span class="calendar-count">{{ cell.count }}条</span>{% endif %}{% endif %}
+  {% if cell.day %}<span>{{ cell.day }}</span>{% if cell.count %}<span class="calendar-count">{{ cell.count }}条</span>{% endif %}{{ attachment_count(cell.image_count) }}{% endif %}
   </div>
 {% endfor %}
 </div>

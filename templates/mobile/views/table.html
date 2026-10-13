@@ -4,7 +4,7 @@
 {% else %}
 {% for row in view.rows %}
 <article class="record-card">
-  <div class="record-number">记录 {{ (view.page - 1) * view.page_size + loop.index }}</div>
+  <div class="record-number"><span>记录 {{ (view.page - 1) * view.page_size + loop.index }}</span>{{ attachment_count(row.image_count) }}</div>
   <dl class="record-fields">
   {% for field in view.fields %}
     <div class="record-field"><dt>{{ field.name }}{% if field.get('unit') %}<span class="field-unit">{{ field.unit }}</span>{% endif %}</dt><dd>{{ row.cells[loop.index0] }}</dd></div>

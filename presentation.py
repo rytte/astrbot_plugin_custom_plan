@@ -46,10 +46,12 @@ def checkin_days(plan: dict, records: list[dict]) -> dict:
     rules = plan["rules"]
     quantities = defaultdict(float)
     counts = defaultdict(int)
+    image_counts = defaultdict(int)
     for record in records:
         key = record["values"][rules["date_field"]]
         quantities[key] += record["values"][rules["amount_field"]]
         counts[key] += 1
+        image_counts[key] += len(record.get("images", []))
     days = {}
     for key, quantity in quantities.items():
         threshold = next(
@@ -58,6 +60,7 @@ def checkin_days(plan: dict, records: list[dict]) -> dict:
         days[key] = {
             "amount": quantity,
             "count": counts[key],
+            "image_count": image_counts[key],
             "threshold": threshold,
             "done": quantity >= threshold,
         }
@@ -118,6 +121,7 @@ def todo_details(plan: dict, records: list[dict], day: str) -> dict:
     return {
         "date": day,
         "record_ids": [record["record_id"] for record in records],
+        "image_count": sum(len(record.get("images", [])) for record in records),
         "title": "、".join(titles) if titles else f"{day} · {plan['name']}",
         "notes": notes,
         "show_due": show_due,
@@ -270,6 +274,7 @@ def build_view(
             rows=[
                 {
                     "record_id": r["record_id"],
+                    "image_count": len(r.get("images", [])),
                     "cells": [display(r["values"].get(f["field_id"])) for f in fields],
                 }
                 for r in records[(page - 1) * size : page * size]
@@ -315,7 +320,9 @@ def build_view(
             for t in reversed(plan["rules"]["thresholds"])
             if t["from"] <= current_day.isoformat()
         )
-        current = days.get(current_day.isoformat(), {"done": False, "amount": 0})
+        current = days.get(
+            current_day.isoformat(), {"done": False, "amount": 0, "image_count": 0}
+        )
         view.update(
             cells=cells,
             streak=streak,
@@ -360,6 +367,9 @@ def build_view(
                         "today": key == current_day.isoformat(),
                         "labels": labels,
                         "count": len(entries),
+                        "image_count": sum(
+                            len(record.get("images", [])) for record in entries
+                        ),
                     }
                 )
         view.update(
@@ -368,44 +378,6 @@ def build_view(
             undated=undated,
             monthly_count=sum(len(items) for items in grouped.values()),
         )
-    visible_records = []
-    if view["visible"]:
-        if kind == "table":
-            visible_records = records[(page - 1) * size : page * size]
-        elif kind == "todo":
-            visible_ids = {
-                identifier for row in view["rows"] for identifier in row["record_ids"]
-            }
-            visible_records = [
-                record for record in records if record["record_id"] in visible_ids
-            ]
-        elif kind == "checkin":
-            visible_records = [
-                record
-                for record in personal
-                if record["values"][plan["rules"]["date_field"]]
-                == current_day.isoformat()
-            ]
-        elif kind == "calendar":
-            visible_records = [
-                record for entries in grouped.values() for record in entries
-            ]
-    image_count = sum(len(record.get("images", [])) for record in visible_records)
-    image_records = []
-    remaining = 6
-    for record in visible_records:
-        if remaining and record.get("images"):
-            images = record["images"][:remaining]
-            image_records.append(
-                {
-                    "record_id": record["record_id"],
-                    "date": record_date(plan, record),
-                    "images": [
-                        {"image_id": identifier, "src": ""} for identifier in images
-                    ],
-                }
-            )
-            remaining -= len(images)
     blocks = []
     for block in plan["blocks"]:
         if not block.get("visible", True):
@@ -477,8 +449,6 @@ def build_view(
         "plan": plan,
         "view": view,
         "blocks": blocks,
-        "image_records": image_records,
-        "image_count": image_count,
         "references": [
             {
                 **item,

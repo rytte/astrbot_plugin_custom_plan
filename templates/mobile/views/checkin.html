@@ -1,7 +1,7 @@
 <div class="section-head"><h2>每日打卡</h2><span class="muted">{{ view.today }}{% if view.scope_label %} · {{ view.scope_label }}{% endif %}</span></div>
 <div class="check-hero">
   <h3>{{ '今日已达标' if view.current.done else '今日尚未达标' }}</h3>
-  <div class="check-current">{{ view.current.amount | display }} <span class="muted">/ {{ view.threshold | display }} {{ view.unit }}</span></div>
+  <div class="check-current">{{ view.current.amount | display }} <span class="muted">/ {{ view.threshold | display }} {{ view.unit }}{% if view.current.image_count %} · {{ attachment_count(view.current.image_count, '今日附图') }}{% endif %}</span></div>
   <div class="check-streak"><span class="hero-value">{{ view.streak }}</span><span class="muted"> 天连续达标</span></div>
 </div>
 <div class="check-caption">近 28 天 · 达标 {{ view.days_done }} 天{% if view.unit %} · 单位：{{ view.unit }}{% endif %}</div>

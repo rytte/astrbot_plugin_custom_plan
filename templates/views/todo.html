@@ -4,7 +4,7 @@
   <span class="task-mark">{{ '☑' if row.done else '☐' }}</span>
   <div class="task-body">
     <div class="task-title">{{ row.title }}</div>
-    <div class="muted">{{ row.state_label }} · {{ row.amount | display }}{% if row.threshold is not none %} / {{ row.threshold | display }}{% endif %}{% if row.unit %} {{ row.unit }}{% endif %}{% if row.completed_at %} · 完成于 {{ row.completed_at | localtime(plan.timezone) }}{% endif %}</div>
+    <div class="muted">{{ row.state_label }} · {{ row.amount | display }}{% if row.threshold is not none %} / {{ row.threshold | display }}{% endif %}{% if row.unit %} {{ row.unit }}{% endif %}{% if row.completed_at %} · 完成于 {{ row.completed_at | localtime(plan.timezone) }}{% endif %}{% if row.image_count %} · {{ attachment_count(row.image_count) }}{% endif %}</div>
     {% for note in row.notes %}<div class="note">{{ note }}</div>{% endfor %}
     {% if row.show_due %}<div class="task-date">{% for deadline in row.due_dates %}<div>截止 {{ deadline }}</div>{% else %}无截止日期{% endfor %}</div>{% endif %}
   </div>

@@ -512,31 +512,57 @@ async def test_v5_upgrade_only_adds_media_table(storage):
 
 
 @pytest.mark.parametrize("layout", ["mobile", "desktop"])
-@pytest.mark.parametrize("view_type", ["table", "todo", "calendar", "checkin"])
-async def test_thumbnails_are_bounded_and_scoped_to_visible_records(
-    storage, tmp_path, layout, view_type
+@pytest.mark.parametrize(
+    "view_type,preset",
+    [
+        ("table", "checkin"),
+        ("todo", "checkin"),
+        ("todo", "todo"),
+        ("calendar", "checkin"),
+        ("checkin", "checkin"),
+    ],
+)
+async def test_attachment_counts_render_without_reading_record_images(
+    storage, tmp_path, layout, view_type, preset
 ):
-    pid = await create_plan(storage, render_layout=layout)
+    pid = await create_plan(storage, render_layout=layout, preset=preset)
     rid, image = await add_image(storage, pid)
     await change(storage, pid, "view", {"type": view_type})
     plan = await storage.snapshot(pid, OWNER)
-    view = build_view(plan, {}, OWNER.user)
-    assert view["image_count"] == 1 and view["image_records"][0]["record_id"] == rid
+    view = build_view(plan, {}, OWNER.user)["view"]
+    if view_type == "checkin":
+        assert view["current"]["image_count"] == 1
+    elif view_type == "calendar":
+        assert sum(cell["image_count"] for cell in view["cells"]) == 1
+    else:
+        assert view["rows"][0]["image_count"] == 1
+        assert rid in view["rows"][0].get(
+            "record_ids", [view["rows"][0].get("record_id")]
+        )
     renderer = LocalRenderer(tmp_path / "render", {})
-    renderer.image_loader = storage.image_thumbnail
+
+    def reject_record_image_load(plan_id, image_id):
+        pytest.fail("数量标记不应读取记录附图")
+
+    renderer.image_loader = reject_record_image_load
     html = renderer.html(plan, {}, OWNER.user)
-    assert "data:image/webp;base64," in html
+    assert 'aria-label="附图 1 张"' in html
+    assert '<div class="attachment-section">' not in html
+    assert "data:image/webp;base64," not in html
     assert "img-src data:" in html
     assert str(storage.media.directory) not in html
     assert image.image_id not in html
+    storage.media.path(image.image_id, True).unlink()
+    assert 'aria-label="附图 1 张"' in renderer.html(plan, {}, OWNER.user)
     await change(storage, pid, "view", {"visible": False})
-    assert not build_view(await storage.snapshot(pid, OWNER), {}, OWNER.user)[
-        "image_records"
-    ]
+    hidden_html = renderer.html(await storage.snapshot(pid, OWNER), {}, OWNER.user)
+    assert '<span class="attachment-count"' not in hidden_html
 
 
-async def test_table_image_previews_follow_pagination_and_filtering(storage):
+@pytest.mark.parametrize("view_type", ["table", "todo"])
+async def test_attachment_counts_follow_pagination_and_filtering(storage, view_type):
     pid = await create_plan(storage, preset="todo")
+    await change(storage, pid, "view", {"type": view_type})
     image = storage.media.prepare(image_bytes())
     await change(
         storage,
@@ -551,16 +577,21 @@ async def test_table_image_previews_follow_pagination_and_filtering(storage):
         {1: image},
     )
     plan = await storage.snapshot(pid, OWNER)
-    assert build_view(plan, {"page": 2, "page_size": 1}, OWNER.user)["image_count"] == 0
+    first = build_view(plan, {"page_size": 1}, OWNER.user)["view"]["rows"]
+    second = build_view(plan, {"page": 2, "page_size": 1}, OWNER.user)["view"]["rows"]
+    assert first[0]["image_count"] == 1
+    assert second[0]["image_count"] == 0
     await change(storage, pid, "view", {"filters": {"equals": {"title": "second"}}})
     assert (
-        build_view(await storage.snapshot(pid, OWNER), {}, OWNER.user)["image_count"]
+        build_view(await storage.snapshot(pid, OWNER), {}, OWNER.user)["view"]["rows"][
+            0
+        ]["image_count"]
         == 0
     )
 
 
-async def test_thumbnail_preview_has_six_image_cap(storage):
-    pid = await create_plan(storage, preset="generic")
+async def test_attachment_counts_include_all_images_across_records(storage):
+    pid = await create_plan(storage, preset="todo")
     prepared = {index: storage.media.prepare(image_bytes()) for index in range(1, 4)}
     await change(
         storage,
@@ -573,13 +604,17 @@ async def test_thumbnail_preview_has_six_image_cap(storage):
         },
         prepared,
     )
-    view = build_view(await storage.snapshot(pid, OWNER), {}, OWNER.user)
-    assert view["image_count"] == 9
-    assert sum(len(record["images"]) for record in view["image_records"]) == 6
+    rows = build_view(await storage.snapshot(pid, OWNER), {}, OWNER.user)["view"][
+        "rows"
+    ]
+    assert [row["image_count"] for row in rows] == [3, 3, 3]
 
 
 @pytest.mark.parametrize("mode", ["public", "protected"])
-async def test_checkin_thumbnails_follow_group_statistical_user(storage, mode):
+@pytest.mark.parametrize("view_type", ["checkin", "todo"])
+async def test_checkin_attachment_counts_follow_group_statistical_user(
+    storage, mode, view_type
+):
     owner = Actor("qq-1", "owner", "g1")
     member = Actor("qq-1", "member", "g1")
     created = await storage.mutate(
@@ -591,16 +626,17 @@ async def test_checkin_thumbnails_follow_group_statistical_user(storage, mode):
     pid = created["plan_id"]
     first = storage.media.prepare(image_bytes())
     second = storage.media.prepare(image_bytes(color="blue"))
+    third = storage.media.prepare(image_bytes(color="green"))
     await storage.mutate(
         owner,
         "add_records",
-        {"records": [{"values": {}, "images": {"add": [1]}}]},
+        {"records": [{"values": {}, "images": {"add": [1, 2]}}]},
         pid,
         1,
         "owner-image",
-        {1: first},
+        {1: first, 2: third},
     )
-    await storage.mutate(owner, "view", {"type": "checkin"}, pid, 2, "checkin-view")
+    await storage.mutate(owner, "view", {"type": view_type}, pid, 2, "checkin-view")
     if mode == "public":
         await storage.mutate(
             member,
@@ -612,15 +648,15 @@ async def test_checkin_thumbnails_follow_group_statistical_user(storage, mode):
             {1: second},
         )
     plan = await storage.snapshot(pid, member)
-    view = build_view(plan, {}, member.user)
-    assert view["image_count"] == 1
-    expected = second.image_id if mode == "public" else first.image_id
-    assert view["image_records"][0]["images"][0]["image_id"] == expected
+    view = build_view(plan, {}, member.user)["view"]
+    row = view["current"] if view_type == "checkin" else view["rows"][0]
+    assert row["image_count"] == (1 if mode == "public" else 2)
 
 
 @pytest.mark.parametrize("layout", ["mobile", "desktop"])
-async def test_browser_renders_local_thumbnails_without_external_requests(
-    storage, tmp_path, browser_service, layout
+@pytest.mark.parametrize("view_type", ["table", "todo", "calendar", "checkin"])
+async def test_browser_renders_attachment_counts_inside_view(
+    storage, tmp_path, browser_service, layout, view_type
 ):
     pid = await create_plan(storage, render_layout=layout)
     images = {
@@ -641,6 +677,7 @@ async def test_browser_renders_local_thumbnails_without_external_requests(
         },
         images,
     )
+    await change(storage, pid, "view", {"type": view_type})
     plan = await storage.snapshot(pid, OWNER)
     renderer = LocalRenderer(
         tmp_path / "preview", {}, browser_service_resolver=lambda: browser_service
@@ -648,14 +685,21 @@ async def test_browser_renders_local_thumbnails_without_external_requests(
     renderer.image_loader = storage.image_thumbnail
     await renderer.initialize()
     try:
-        async with browser_service.session(javascript_enabled=False) as page:
+        async with browser_service.session(
+            javascript_enabled=False,
+            viewport={"width": 640 if layout == "mobile" else 1000, "height": 800},
+        ) as page:
             await page.set_content(
                 renderer.html(plan, {}, OWNER.user), wait_until="load"
             )
-            thumbnails = page.locator(".attachment-thumb")
-            assert await thumbnails.count() == 3
-            assert await thumbnails.evaluate_all(
-                "images => images.every(image => image.complete && image.naturalWidth > 0)"
+            assert await page.locator("img").count() == 0
+            badges = page.locator(".attachment-count")
+            assert await badges.count() == 1
+            assert await badges.get_attribute("aria-label") == "附图 3 张"
+            assert await badges.evaluate(
+                "badge => { const b = badge.getBoundingClientRect(); "
+                "const p = badge.closest('.panel').getBoundingClientRect(); "
+                "return b.width > 0 && b.left >= p.left && b.right <= p.right; }"
             )
         output = await renderer.render(plan, {}, OWNER.user)
         with Image.open(output) as screenshot:

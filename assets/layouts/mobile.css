@@ -52,7 +52,7 @@
 .pager { overflow-wrap: anywhere; }
 .record-card { padding: 18px; }
 .record-card + .record-card { margin-top: 14px; }
-.record-number { font-size: 20px; margin-bottom: 10px; }
+.record-number { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 20px; margin-bottom: 10px; }
 .record-fields { margin: 0; }
 .record-field { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; padding: 10px 0; }
 .record-field dt { font-size: 22px; }
