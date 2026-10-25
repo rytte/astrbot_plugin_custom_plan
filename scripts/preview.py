@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from astrbot_plugin_browser.render_api import BrowserServiceAPI  # noqa: E402
 from astrbot_plugin_browser.service import BrowserService  # noqa: E402
 from astrbot_plugin_custom_plan.appearance import (  # noqa: E402
     DEFAULT_THEME,
@@ -53,8 +54,9 @@ async def main():
         browser_executable=args.browser, startup_timeout=30
     )
     await browser_service.initialize()
+    api = BrowserServiceAPI(browser_service)
     renderer = LocalRenderer(
-        output, config, browser_service_resolver=lambda: browser_service
+        output, config, browser_service_resolver=lambda: api
     )
     await renderer.initialize()
     actor = Actor("preview", "demo")

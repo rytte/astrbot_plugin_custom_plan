@@ -362,7 +362,7 @@ python -m ruff check .
 python -m ruff format --check .
 ```
 
-设置 `ASTRBOT_BROWSER_EXECUTABLE` 为本地 Chromium 或 Edge 可执行文件路径，可启用真实截图测试；测试将启动一个 `BrowserService`，验证渲染器借用同一浏览器进程并在每次任务后释放页面上下文。其余测试不启动浏览器。有相邻 AstrBot 源码及其依赖时，还会执行实际插件工具注册与消息发送集成测试。所有测试使用隔离的数据目录。
+设置 `ASTRBOT_BROWSER_EXECUTABLE` 为本地 Chromium 或 Edge 可执行文件路径，可启用真实截图测试；测试将启动一个 `BrowserService`，四种视图与两种布局的截图通过公开的 `BrowserServiceAPI` 调用，验证渲染器借用同一浏览器进程、保存返回的图片字节，并在每次任务后释放页面上下文。其余测试不启动浏览器。有相邻 AstrBot 源码及其依赖时，还会执行实际插件工具注册与消息发送集成测试。所有测试使用隔离的数据目录。
 
 预览脚本增加 `--supervised` 可生成带盾牌的看板示例，存入对应主题与布局下的 `supervised/` 子目录，不修改任何实际计划。
 

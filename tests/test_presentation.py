@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from copy import deepcopy
 from pathlib import Path
 
@@ -237,10 +239,13 @@ def test_layout_controls_default_paging_but_explicit_options_win(tmp_path):
 async def test_real_screenshots_offline_cleanup_and_browser_reuse(
     tmp_path, browser_service, due_field
 ):
+    from astrbot_plugin_browser.render_api import BrowserServiceAPI
+
+    api = BrowserServiceAPI(browser_service)
     renderer = LocalRenderer(
         tmp_path,
         {"render_timeout": 90},
-        browser_service_resolver=lambda: browser_service,
+        browser_service_resolver=lambda: api,
     )
     await renderer.initialize()
     try:
@@ -277,3 +282,44 @@ async def test_real_screenshots_offline_cleanup_and_browser_reuse(
         assert not list(Path(tmp_path).glob("*.png"))
     finally:
         await renderer.close()
+
+
+@pytest.mark.parametrize("write_error", [False, True])
+async def test_screenshot_file_cleanup_after_cancel_or_write_failure(
+    tmp_path, browser_service, monkeypatch, write_error
+):
+    from astrbot_plugin_browser.render_api import BrowserServiceAPI
+
+    api = BrowserServiceAPI(browser_service)
+    renderer = LocalRenderer(tmp_path, {}, browser_service_resolver=lambda: api)
+    await renderer.initialize()
+    plan = create_plan(OWNER, {"name": "写入清理"}, "Asia/Shanghai")
+    started = threading.Event()
+    release = threading.Event()
+    write_bytes = Path.write_bytes
+
+    def delayed_write(path, data):
+        started.set()
+        if not release.wait(timeout=5):
+            raise TimeoutError("test did not release screenshot writer")
+        write_bytes(path, data)
+        if write_error:
+            raise OSError("test screenshot write failed")
+
+    monkeypatch.setattr(Path, "write_bytes", delayed_write)
+    task = asyncio.create_task(renderer.render(plan, {}, OWNER.user))
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        if not write_error:
+            task.cancel()
+        release.set()
+        with pytest.raises(OSError if write_error else asyncio.CancelledError):
+            await task
+        assert not list(tmp_path.glob("*.png"))
+        assert browser_service._browser.contexts == []
+        assert renderer.pending == 0
+        assert not renderer.tasks
+    finally:
+        release.set()
+        await renderer.close()
+        await asyncio.gather(task, return_exceptions=True)

@@ -173,9 +173,18 @@ class LocalRenderer:
                             raise PlanError(
                                 "看板过长，请减少 page_size、隐藏部分区块或调整展示字段。"
                             )
-                        await board.screenshot(
-                            path=str(path), animations="disabled", timeout=15_000
+                        png = await board.screenshot(
+                            type="png", animations="disabled", timeout=15_000
                         )
+                        write_task = asyncio.create_task(
+                            asyncio.to_thread(path.write_bytes, png)
+                        )
+                        try:
+                            await asyncio.shield(write_task)
+                        except asyncio.CancelledError:
+                            # Finish the write before the outer cleanup removes it.
+                            await write_task
+                            raise
                     return path
         except BaseException:
             path.unlink(missing_ok=True)
